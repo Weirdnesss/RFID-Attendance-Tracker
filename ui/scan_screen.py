@@ -64,6 +64,8 @@ class ScanScreen(ctk.CTkFrame):
         self._scan_mode     = "in"   # "in" or "out"
         self._after_ids = []
         self._last_session_id = None
+        self._last_render_state = None
+        self._pill_widgets = {}  # {period_id: {...widgets}}
         self._build_ui()
         # Delay start until mainloop is running — prevents
         # "main thread is not in main loop" on startup
@@ -76,6 +78,24 @@ class ScanScreen(ctk.CTkFrame):
         aid = self.after(delay, callback)
         self._after_ids.append(aid)
         return aid
+
+    def _get_render_state(self, session):
+        if not session:
+            return None
+
+        return (
+            session["id"],
+            session.get("count"),
+            tuple(
+                (
+                    p["id"],
+                    session.get("period_stats", {}).get(p["id"], {}).get("scanned", 0),
+                    session.get("period_stats", {}).get(p["id"], {}).get("late", 0),
+                    session.get("period_stats", {}).get(p["id"], {}).get("timed_out", 0),
+                )
+                for p in session.get("periods", [])
+            )
+        )
 
     def _build_ui(self):
         # rows: 0=sbar  1=info strip  2=scan area  3=log  4=rbar
@@ -221,150 +241,361 @@ class ScanScreen(ctk.CTkFrame):
         self._pills_frame = self._pills_scroll
         self._strip_stats  = None       
 
-    def _refresh_info_strip(self):
-        if not self.active_session:
-            self._info_strip.grid_remove()
-            return
-
-        self._info_strip.grid()
-
-        # ── Rebuild pills ────────────────────────────────────────────────────
+    def _build_pills(self):
         for w in self._pills_frame.winfo_children():
             w.destroy()
 
-        now     = datetime.now().time()
-        periods = self.active_session.get("periods", [])
-        n_total = self.active_session.get("count", 0)
-        est     = self.active_session.get("estimated_attendees")
+        self._pill_widgets.clear()
+        
+        now = datetime.now().time()
 
-        _PERIOD_COLORS = ["#3ecf8e", "#6c8fff", "#f0a843", "#e05c5c",
-                        "#a78bfa", "#5DCAA5", "#F0997B"]
+        for i, p in enumerate(self.active_session.get("periods", [])):
+            pid = p["id"]
 
-        for i, p in enumerate(periods):
-            color  = _PERIOD_COLORS[i % len(_PERIOD_COLORS)]
+            # ── Active state ─────────────────────────────
             t_in_s = p.get("time_in_start")
             t_in_e = p.get("time_in_end")
-            active = (t_in_s is not None and t_in_e is not None
-                    and t_in_s <= now <= t_in_e)
 
-            period_key = p.get("id")
-            pd_stats = self.active_session.get("period_stats", {}).get(period_key, {})
-            scanned  = pd_stats.get("scanned", 0)
-            late     = pd_stats.get("late", 0)
-            # pd_list = self.active_session.get("period_stats", [])
+            active = (
+                t_in_s and t_in_e and t_in_s <= now <= t_in_e
+            )
 
-            # if i < len(pd_list):
-            #     pd_stats = pd_list[i]
-            # else:
-            #     pd_stats = {}
+            color = _PERIOD_COLORS[i % len(_PERIOD_COLORS)]
 
             pill = ctk.CTkFrame(
                 self._pills_frame,
                 fg_color="#0d1f18" if active else "#1a1d27",
-                corner_radius=8, border_width=1,
+                corner_radius=8,
+                border_width=1,
                 border_color=color if active else C_BORDER,
             )
             pill.pack(side="left", padx=(0, 6), anchor="n")
 
-            # ── Name row ────────────────────────────────────────────────────
+            # ── Name row ────────────────────────────────
             name_row = ctk.CTkFrame(pill, fg_color="transparent")
             name_row.pack(anchor="w", padx=8, pady=(5, 0))
+
             if active:
-                ctk.CTkFrame(name_row, width=5, height=5,
-                            fg_color=C_SUCCESS, corner_radius=3).pack(
-                    side="left", padx=(0, 5))
-            ctk.CTkLabel(name_row,
-                        text=p.get("name", f"Period {i+1}"),
-                        font=ctk.CTkFont(size=11, weight="bold"),
-                        text_color=C_TEXT).pack(side="left")
+                ctk.CTkFrame(
+                    name_row, width=5, height=5,
+                    fg_color=C_SUCCESS, corner_radius=3
+                ).pack(side="left", padx=(0, 5))
 
-            # ── Time tags row ────────────────────────────────────────────────
-            tags = []
-            if p.get("time_in_start") and p.get("time_in_end"):
-                ts = p["time_in_start"]
-                te = p["time_in_end"]
-                tags.append((f"In {ts.strftime('%I:%M %p').lstrip('0')}"
-                            f"–{te.strftime('%I:%M %p').lstrip('0')}",
-                            "#0b1220", "#38bdf8"))
-            if p.get("late_enabled") and p.get("late_start"):
-                ls    = p["late_start"]
-                grace = p.get("grace_minutes", 0)
-                tags.append((f"Late {ls.strftime('%I:%M %p').lstrip('0')}",
-                            "#1f1708", "#f0a843"))
-                if grace:
-                    tags.append((f"+{grace}m", "#16181f", C_MUTED))
-            if (p.get("timeout_enabled")
-                    and p.get("timeout_start") and p.get("timeout_end")):
-                ts = p["timeout_start"]
-                te = p["timeout_end"]
-                tags.append((f"Out {ts.strftime('%I:%M %p').lstrip('0')}"
-                            f"–{te.strftime('%I:%M %p').lstrip('0')}",
-                            "#100e1f", "#a78bfa"))
+            name_lbl = ctk.CTkLabel(
+                name_row,
+                text=p.get("name", f"Period {i+1}"),
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=C_TEXT
+            )
+            name_lbl.pack(side="left")
 
-            if tags:
-                tags_row = ctk.CTkFrame(pill, fg_color="transparent")
-                tags_row.pack(anchor="w", padx=8, pady=(2, 0))
-                for text, fg, tc in tags:
-                    ctk.CTkLabel(tags_row, text=text,
-                                font=ctk.CTkFont(size=9, weight="bold"),
-                                fg_color=fg, text_color=tc,
-                                corner_radius=3).pack(side="left", padx=(0, 3))
+            # ── Tags (time info) ────────────────────────
+            tags_row = ctk.CTkFrame(pill, fg_color="transparent")
+            tags_row.pack(anchor="w", padx=8, pady=(2, 0))
 
-            # ── Stat row (inline, bottom of pill) ───────────────────────────
+            if t_in_s and t_in_e:
+                ctk.CTkLabel(
+                    tags_row,
+                    text=f"In {t_in_s.strftime('%I:%M %p').lstrip('0')}–{t_in_e.strftime('%I:%M %p').lstrip('0')}",
+                    font=ctk.CTkFont(size=9, weight="bold"),
+                    fg_color="#0b1220",
+                    text_color="#38bdf8",
+                    corner_radius=3
+                ).pack(side="left", padx=(0, 3))
+
+            # ── Stats row ──────────────────────────────
             stat_row = ctk.CTkFrame(pill, fg_color="transparent")
             stat_row.pack(anchor="w", padx=8, pady=(4, 6))
 
-            stat_items = [("signed in", scanned, C_ACCENT)]
+            scanned_lbl = ctk.CTkLabel(
+                stat_row,
+                text="0",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=C_ACCENT
+            )
+            scanned_lbl.pack(side="left", padx=(0, 2))
 
-            if p.get("late_enabled"):
-                stat_items.append(("late", late, C_WARNING))
-            if p.get("timeout_enabled"):
-                timed_out = pd_stats.get("timed_out", 0)
-                stat_items.append(("signed out", timed_out, "#a78bfa"))
+            ctk.CTkLabel(
+                stat_row,
+                text="signed in",
+                font=ctk.CTkFont(size=9),
+                text_color=C_MUTED
+            ).pack(side="left", padx=(0, 8))
 
-            for label, val, color_s in stat_items:
-                ctk.CTkLabel(stat_row,
-                            text=str(val),
-                            font=ctk.CTkFont(size=11, weight="bold"),
-                            text_color=color_s).pack(side="left", padx=(0, 2))
-                ctk.CTkLabel(stat_row,
-                            text=label,
-                            font=ctk.CTkFont(size=9),
-                            text_color=C_MUTED).pack(side="left", padx=(0, 8))              
+            late_lbl = ctk.CTkLabel(
+                stat_row,
+                text="0",
+                font=ctk.CTkFont(size=11, weight="bold"),
+                text_color=C_WARNING
+            )
+            late_lbl.pack(side="left", padx=(0, 2))
 
-        # ── Global summary pill (rightmost) ─────────────────────────────────
-        summary = ctk.CTkFrame(
-            self._pills_frame,
-            fg_color="#1a1d27", corner_radius=8,
-            border_width=1, border_color=C_BORDER,
-        )
-        summary.pack(side="left", padx=(6, 0), anchor="n")
+            ctk.CTkLabel(
+                stat_row,
+                text="late",
+                font=ctk.CTkFont(size=9),
+                text_color=C_MUTED
+            ).pack(side="left", padx=(0, 8))
 
-        count_text = f"{n_total} / {est}" if est else str(n_total)
-        ctk.CTkLabel(summary,
-                    text=count_text,
-                    font=ctk.CTkFont(size=13, weight="bold"),
-                    text_color=C_TEXT).pack(padx=12, pady=(8, 0))
-        ctk.CTkLabel(summary,
-                    text="total scans",
-                    font=ctk.CTkFont(size=9),
-                    text_color=C_MUTED).pack(padx=12, pady=(0, 4))
+            self._pill_widgets[pid] = {
+                "frame": pill,
+                "scanned": scanned_lbl,
+                "late": late_lbl,
+            }
 
-        if est and est > 0:
-            pct   = min(round(n_total / est * 100), 100)
-            fill_w = max(2, round(80 * n_total / est))
+    def _update_pills(self):
+        if not self.active_session:
+            return
 
-            ctk.CTkLabel(summary,
-                        text=f"{pct}%",
-                        font=ctk.CTkFont(size=10),
-                        text_color=C_ACCENT).pack(padx=12, pady=(0, 2))
+        now = datetime.now().time()
 
-            bar_bg = ctk.CTkFrame(summary, fg_color=C_BORDER,
-                                corner_radius=2, height=4, width=80)
-            bar_bg.pack(padx=12, pady=(0, 8))
-            bar_bg.pack_propagate(False)
-            ctk.CTkFrame(bar_bg, fg_color=C_ACCENT,
-                        corner_radius=2, height=4, width=fill_w).place(x=0, y=0)
+        for i, p in enumerate(self.active_session.get("periods", [])):
+            pid = p["id"]
+            widgets = self._pill_widgets.get(pid)
+
+            if not widgets:
+                continue
+
+            stats = self.active_session.get("period_stats", {}).get(pid, {})
+
+            scanned = stats.get("scanned", 0)
+            late = stats.get("late", 0)
+
+            widgets["scanned"].configure(text=str(scanned))
+            widgets["late"].configure(text=str(late))
+
+            # Active highlight
+            t_in_s = p.get("time_in_start")
+            t_in_e = p.get("time_in_end")
+
+            active = (
+                t_in_s and t_in_e and t_in_s <= now <= t_in_e
+            )
+
+            color = _PERIOD_COLORS[i % len(_PERIOD_COLORS)]
+
+            widgets["frame"].configure(
+                fg_color="#0d1f18" if active else "#1a1d27",
+                border_color=color if active else C_BORDER
+            )
+    
+    def _update_pill_metadata(self):
+        if not self.active_session:
+            return
+
+        now = datetime.now().time()
+
+        for i, p in enumerate(self.active_session.get("periods", [])):
+            pid = p["id"]
+            widgets = self._pill_widgets.get(pid)
+            if not widgets:
+                continue
+
+            frame = widgets["frame"]
+
+            # ── Active period highlight ─────────────────────────
+            t_in_s = p.get("time_in_start")
+            t_in_e = p.get("time_in_end")
+
+            active = t_in_s and t_in_e and t_in_s <= now <= t_in_e
+
+            color = _PERIOD_COLORS[i % len(_PERIOD_COLORS)]
+
+            frame.configure(
+                fg_color="#0d1f18" if active else "#1a1d27",
+                border_color=color if active else C_BORDER
+            )
+
+            # ── TAGS LOGIC (RESTORED) ───────────────────────────
+            tags = []
+
+            if t_in_s and t_in_e:
+                tags.append(
+                    f"In {t_in_s.strftime('%I:%M %p').lstrip('0')}–"
+                    f"{t_in_e.strftime('%I:%M %p').lstrip('0')}"
+                )
+
+            if p.get("late_enabled") and p.get("late_start"):
+                ls = p["late_start"]
+                grace = p.get("grace_minutes", 0)
+
+                tags.append(
+                    f"Late {ls.strftime('%I:%M %p').lstrip('0')} (+{grace}m)"
+                )
+
+            if p.get("timeout_enabled") and p.get("timeout_start") and p.get("timeout_end"):
+                ts = p["timeout_start"]
+                te = p["timeout_end"]
+
+                tags.append(
+                    f"Out {ts.strftime('%I:%M %p').lstrip('0')}–"
+                    f"{te.strftime('%I:%M %p').lstrip('0')}"
+                )
+
+            # store tags safely if you want future rendering
+            widgets["tags"] = tags
+
+    def _update_session_summary(self):
+        if not self.active_session:
+            return
+
+        n_total = self.active_session.get("count", 0)
+        est = self.active_session.get("estimated_attendees")
+
+        if est:
+            pct = min(round(n_total / est * 100), 100)
+            self._count_lbl.configure(
+                text=f"{n_total}/{est} scans ({pct}%)"
+            )
+        else:
+            self._count_lbl.configure(
+                text=f"Total scans this session: {n_total}"
+            )
+
+    # def _refresh_info_strip(self):
+    #     if not self.active_session:
+    #         self._info_strip.grid_remove()
+    #         return
+
+    #     self._info_strip.grid()
+
+    #     # ── Rebuild pills ────────────────────────────────────────────────────
+    #     for w in self._pills_frame.winfo_children():
+    #         w.destroy()
+
+    #     now     = datetime.now().time()
+    #     periods = self.active_session.get("periods", [])
+    #     n_total = self.active_session.get("count", 0)
+    #     est     = self.active_session.get("estimated_attendees")
+
+    #     _PERIOD_COLORS = ["#3ecf8e", "#6c8fff", "#f0a843", "#e05c5c",
+    #                     "#a78bfa", "#5DCAA5", "#F0997B"]
+
+    #     for i, p in enumerate(periods):
+    #         color  = _PERIOD_COLORS[i % len(_PERIOD_COLORS)]
+    #         t_in_s = p.get("time_in_start")
+    #         t_in_e = p.get("time_in_end")
+    #         active = (t_in_s is not None and t_in_e is not None
+    #                 and t_in_s <= now <= t_in_e)
+
+    #         period_key = p.get("id")
+    #         pd_stats = self.active_session.get("period_stats", {}).get(period_key, {})
+    #         scanned  = pd_stats.get("scanned", 0)
+    #         late     = pd_stats.get("late", 0)
+    #         # pd_list = self.active_session.get("period_stats", [])
+
+    #         # if i < len(pd_list):
+    #         #     pd_stats = pd_list[i]
+    #         # else:
+    #         #     pd_stats = {}
+
+    #         pill = ctk.CTkFrame(
+    #             self._pills_frame,
+    #             fg_color="#0d1f18" if active else "#1a1d27",
+    #             corner_radius=8, border_width=1,
+    #             border_color=color if active else C_BORDER,
+    #         )
+    #         pill.pack(side="left", padx=(0, 6), anchor="n")
+
+    #         # ── Name row ────────────────────────────────────────────────────
+    #         name_row = ctk.CTkFrame(pill, fg_color="transparent")
+    #         name_row.pack(anchor="w", padx=8, pady=(5, 0))
+    #         if active:
+    #             ctk.CTkFrame(name_row, width=5, height=5,
+    #                         fg_color=C_SUCCESS, corner_radius=3).pack(
+    #                 side="left", padx=(0, 5))
+    #         ctk.CTkLabel(name_row,
+    #                     text=p.get("name", f"Period {i+1}"),
+    #                     font=ctk.CTkFont(size=11, weight="bold"),
+    #                     text_color=C_TEXT).pack(side="left")
+
+    #         # ── Time tags row ────────────────────────────────────────────────
+    #         tags = []
+    #         if p.get("time_in_start") and p.get("time_in_end"):
+    #             ts = p["time_in_start"]
+    #             te = p["time_in_end"]
+    #             tags.append((f"In {ts.strftime('%I:%M %p').lstrip('0')}"
+    #                         f"–{te.strftime('%I:%M %p').lstrip('0')}",
+    #                         "#0b1220", "#38bdf8"))
+    #         if p.get("late_enabled") and p.get("late_start"):
+    #             ls    = p["late_start"]
+    #             grace = p.get("grace_minutes", 0)
+    #             tags.append((f"Late {ls.strftime('%I:%M %p').lstrip('0')}",
+    #                         "#1f1708", "#f0a843"))
+    #             if grace:
+    #                 tags.append((f"+{grace}m", "#16181f", C_MUTED))
+    #         if (p.get("timeout_enabled")
+    #                 and p.get("timeout_start") and p.get("timeout_end")):
+    #             ts = p["timeout_start"]
+    #             te = p["timeout_end"]
+    #             tags.append((f"Out {ts.strftime('%I:%M %p').lstrip('0')}"
+    #                         f"–{te.strftime('%I:%M %p').lstrip('0')}",
+    #                         "#100e1f", "#a78bfa"))
+
+    #         if tags:
+    #             tags_row = ctk.CTkFrame(pill, fg_color="transparent")
+    #             tags_row.pack(anchor="w", padx=8, pady=(2, 0))
+    #             for text, fg, tc in tags:
+    #                 ctk.CTkLabel(tags_row, text=text,
+    #                             font=ctk.CTkFont(size=9, weight="bold"),
+    #                             fg_color=fg, text_color=tc,
+    #                             corner_radius=3).pack(side="left", padx=(0, 3))
+
+    #         # ── Stat row (inline, bottom of pill) ───────────────────────────
+    #         stat_row = ctk.CTkFrame(pill, fg_color="transparent")
+    #         stat_row.pack(anchor="w", padx=8, pady=(4, 6))
+
+    #         stat_items = [("signed in", scanned, C_ACCENT)]
+
+    #         if p.get("late_enabled"):
+    #             stat_items.append(("late", late, C_WARNING))
+    #         if p.get("timeout_enabled"):
+    #             timed_out = pd_stats.get("timed_out", 0)
+    #             stat_items.append(("signed out", timed_out, "#a78bfa"))
+
+    #         for label, val, color_s in stat_items:
+    #             ctk.CTkLabel(stat_row,
+    #                         text=str(val),
+    #                         font=ctk.CTkFont(size=11, weight="bold"),
+    #                         text_color=color_s).pack(side="left", padx=(0, 2))
+    #             ctk.CTkLabel(stat_row,
+    #                         text=label,
+    #                         font=ctk.CTkFont(size=9),
+    #                         text_color=C_MUTED).pack(side="left", padx=(0, 8))              
+
+    #     # ── Global summary pill (rightmost) ─────────────────────────────────
+    #     summary = ctk.CTkFrame(
+    #         self._pills_frame,
+    #         fg_color="#1a1d27", corner_radius=8,
+    #         border_width=1, border_color=C_BORDER,
+    #     )
+    #     summary.pack(side="left", padx=(6, 0), anchor="n")
+
+    #     count_text = f"{n_total} / {est}" if est else str(n_total)
+    #     ctk.CTkLabel(summary,
+    #                 text=count_text,
+    #                 font=ctk.CTkFont(size=13, weight="bold"),
+    #                 text_color=C_TEXT).pack(padx=12, pady=(8, 0))
+    #     ctk.CTkLabel(summary,
+    #                 text="total scans",
+    #                 font=ctk.CTkFont(size=9),
+    #                 text_color=C_MUTED).pack(padx=12, pady=(0, 4))
+
+    #     if est and est > 0:
+    #         pct   = min(round(n_total / est * 100), 100)
+    #         fill_w = max(2, round(80 * n_total / est))
+
+    #         ctk.CTkLabel(summary,
+    #                     text=f"{pct}%",
+    #                     font=ctk.CTkFont(size=10),
+    #                     text_color=C_ACCENT).pack(padx=12, pady=(0, 2))
+
+    #         bar_bg = ctk.CTkFrame(summary, fg_color=C_BORDER,
+    #                             corner_radius=2, height=4, width=80)
+    #         bar_bg.pack(padx=12, pady=(0, 8))
+    #         bar_bg.pack_propagate(False)
+    #         ctk.CTkFrame(bar_bg, fg_color=C_ACCENT,
+    #                     corner_radius=2, height=4, width=fill_w).place(x=0, y=0)
         
     def _tick(self):
         if not self.winfo_exists():
@@ -378,11 +609,15 @@ class ScanScreen(ctk.CTkFrame):
 
         # ── Case 1: No change ───────────────────────────────────
         if current_id == new_id:
-            # Still update UI stats (counts may change)
             if db_session:
-                self.active_session = db_session
-                self._refresh_info_strip()
-                self._update_count()
+                new_state = self._get_render_state(db_session)
+
+                if new_state != self._last_render_state:
+                    self.active_session = db_session
+                    self._update_pills()
+                    self._update_pill_metadata()
+                    self._update_session_summary()
+                    self._last_render_state = new_state
 
         # ── Case 2: New session started ─────────────────────────
         elif current_id is None and new_id is not None:
@@ -396,8 +631,13 @@ class ScanScreen(ctk.CTkFrame):
             self._start_btn.grid_remove()
             self._end_btn.grid()
 
-            self._refresh_info_strip()
-            self._update_count()
+            self._info_strip.grid()
+            self._build_pills()
+            self._update_pill_metadata()
+            self._last_render_state = None
+
+            self._update_pills()
+            self._update_session_summary()
 
         # ── Case 3: Session ended ───────────────────────────────
         elif current_id is not None and new_id is None:
@@ -411,8 +651,12 @@ class ScanScreen(ctk.CTkFrame):
             self._end_btn.grid_remove()
             self._start_btn.grid()
             self._count_lbl.configure(text="Start a Session")
-
-            self._refresh_info_strip()
+            self._info_strip.grid_remove()
+            self._pill_widgets.clear()
+            for w in self._pills_frame.winfo_children():
+                w.destroy()
+            
+            self._last_render_state = None
             self._set_mode("in")
 
         # ── Case 4: Different session (rare but possible) ───────
@@ -423,8 +667,11 @@ class ScanScreen(ctk.CTkFrame):
             self._session_lbl.configure(
                 text=db_session["name"], text_color=C_ACCENT)
 
-            self._refresh_info_strip()
-            self._update_count()
+            self._build_pills()
+            self._last_render_state = None
+
+            self._update_pills()
+            self._update_session_summary()
 
         # ── Schedule next poll ──────────────────────────────────
         self._safe_after(5000, self._tick)
@@ -470,96 +717,14 @@ class ScanScreen(ctk.CTkFrame):
     def _start_session(self):
         dlg = NewSessionDialog(self)
         self.wait_window(dlg)
-        if dlg.result is None:
+
+        # If user cancelled OR session failed to start
+        if not dlg.result or not dlg.result.get("started"):
             return
 
-        data       = dlg.result
-        session_id = None
-        periods    = []
-
-        db = SessionLocal()
-        try:
-            ev = EventSession(
-                name=data["name"],
-                date=data["date"],
-                estimated_attendees=data.get("estimated_attendees"),
-                academic_period_id=data.get("academic_period_id"),
-            )
-            db.add(ev)
-            db.flush()  # get ev.id before commit
-
-            for p in data["periods"]:
-                period = SessionPeriod(
-                    session_id=ev.id,
-                    name=p["name"],
-                    time_in_start=p["time_in_start"],
-                    time_in_end=p["time_in_end"],
-                    grace_minutes=p["grace_minutes"],
-                    late_enabled=p["late_enabled"],
-                    late_start=p["late_start"],
-                    timeout_enabled=p["timeout_enabled"],
-                    timeout_start=p["timeout_start"],
-                    timeout_end=p["timeout_end"],
-                    sort_order=p["sort_order"],
-                )
-                db.add(period)
-                periods.append(period)
-
-            db.commit()
-            db.refresh(ev)
-
-            db.query(EventSession).filter(
-                EventSession.is_active == 1
-            ).update({"is_active": 0, "active_flag": None})
-
-            # Activate this session
-            ev.is_active = 1
-            db.commit()
-
-            for p in periods:
-                db.refresh(p)
-
-            session_id = ev.id
-
-            # Detach objects so they can be used outside the session
-            periods_data = [
-                {
-                    "id": p.id,
-                    "name": p.name,
-                    "sort_order": p.sort_order,
-                    "time_in_start": p.time_in_start,
-                    "time_in_end": p.time_in_end,
-                    "grace_minutes": p.grace_minutes,
-                    "late_enabled": p.late_enabled,
-                    "late_start": p.late_start,
-                    "timeout_enabled": p.timeout_enabled,
-                    "timeout_start": p.timeout_start,
-                    "timeout_end": p.timeout_end,
-                }
-                for p in periods
-            ]
-
-        finally:
-            db.close()
-
-        self.active_session = {
-            "id": session_id,
-            "name": data["name"],
-            "periods": periods_data,
-            "count": 0,
-            "estimated_attendees": data.get("estimated_attendees"),
-            "breakdown": {"present": 0, "late": 0},
-            "period_stats": {},
-        }
-
-        self._dot.configure(text_color=C_SUCCESS)
-        self._session_lbl.configure(text=data["name"], text_color=C_ACCENT)
-        self._cutoff_lbl.configure(text="")
-        self._start_btn.grid_remove()
-        self._end_btn.grid()
-        self._refresh_info_strip()
-        self._update_count()
-        # self._safe_after(30_000, self._tick)   # simulate session change after 30s for testing
+        # Force immediate refresh instead of waiting 5s
+        self._last_session_id = None
+        self._tick()
 
     def _end_session(self):
         if not messagebox.askyesno(
@@ -580,7 +745,7 @@ class ScanScreen(ctk.CTkFrame):
         self._end_btn.grid_remove()
         self._start_btn.grid()
         self._count_lbl.configure(text="Start a Session")
-        self._refresh_info_strip()   # hides the strip
+        # self._refresh_info_strip()   # hides the strip
         self._set_mode("in")
 
     def _set_mode(self, mode: str):
@@ -708,8 +873,10 @@ class ScanScreen(ctk.CTkFrame):
                 self._add_log(name, student.student_id, "timeout",
                             now.strftime("%I:%M:%S %p"))
                 self.active_session["count"] += 1
-                self._update_count()
-                self._refresh_info_strip()
+                self._update_pills()
+                self._update_pill_metadata()
+                self._update_session_summary()
+                # self._refresh_info_strip()
                 return
 
             # ── SCAN IN mode ─────────────────────────────────────────
@@ -733,11 +900,11 @@ class ScanScreen(ctk.CTkFrame):
 
             # ── Update period stats ─────────────────────────────
             ps = self.active_session.setdefault("period_stats", {})
-            pid = period["sort_order"]   # or use index if consistent
+            pid = period["id"]   # or use index if consistent
 
             if pid not in ps:
                 ps[pid] = {"scanned": 0, "late": 0, "timed_out": 0}
-
+            
             ps[pid]["scanned"] += 1
             if status == "late":
                 ps[pid]["late"] += 1
@@ -761,8 +928,10 @@ class ScanScreen(ctk.CTkFrame):
             self._add_log(name, student.student_id, status,
                           now.strftime("%I:%M:%S %p"))
             self.active_session["count"] += 1
-            self._update_count()
-            self._refresh_info_strip()
+            self._update_pills()
+            self._update_pill_metadata()
+            self._update_session_summary()
+            # self._refresh_info_strip()
         finally:
             db.close()
 
@@ -800,4 +969,4 @@ class ScanScreen(ctk.CTkFrame):
         #     self._count_lbl.configure(text=f"{n} / {est} scans  ({pct}%)")
         # else:
         self._count_lbl.configure(text=f"Total scans this session: {n}")
-        self._refresh_info_strip()
+        # self._refresh_info_strip()
