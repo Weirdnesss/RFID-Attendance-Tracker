@@ -12,6 +12,10 @@ import tkinter as tk
 from tkinter import messagebox
 import customtkinter as ctk
 from datetime import datetime, time as dtime
+import os
+from db.scan_db import get_active_session
+
+terminal_id = os.getenv("TERMINAL_ID", "UNKNOWN")
 
 from ui.components.scan_area import ScanArea
 from ui.components.log_entry import LogEntry
@@ -20,7 +24,7 @@ from db.scan_db import _fetch_group_counts
 
 from sqlalchemy import func
 
-from database import (SessionLocal, Student, Attendance,
+from database import (AcademicPeriod, SessionLocal, Student, Attendance,
                       Session as EventSession, SessionPeriod)
 
 from hardware.rfid_listener import RFIDListener
@@ -59,10 +63,12 @@ class ScanScreen(ctk.CTkFrame):
         self._listener      = None
         self._scan_mode     = "in"   # "in" or "out"
         self._after_ids = []
+        self._last_session_id = None
         self._build_ui()
         # Delay start until mainloop is running — prevents
         # "main thread is not in main loop" on startup
         self._safe_after(500, self._start_rfid)
+        self._safe_after(1000, self._tick)
 
     def _safe_after(self, delay, callback):
         if not self.winfo_exists():
@@ -362,13 +368,66 @@ class ScanScreen(ctk.CTkFrame):
         
     def _tick(self):
         if not self.winfo_exists():
-            return
+            return  
 
-        if not self.active_session:
-            return
-        
-        self._refresh_info_strip()
-        self._safe_after(30_000, self._tick)
+        # ── Poll DB ─────────────────────────────────────────────
+        db_session = get_active_session()
+
+        current_id = self._last_session_id
+        new_id     = db_session["id"] if db_session else None
+
+        # ── Case 1: No change ───────────────────────────────────
+        if current_id == new_id:
+            # Still update UI stats (counts may change)
+            if db_session:
+                self.active_session = db_session
+                self._refresh_info_strip()
+                self._update_count()
+
+        # ── Case 2: New session started ─────────────────────────
+        elif current_id is None and new_id is not None:
+            self.active_session = db_session
+            self._last_session_id = new_id
+
+            self._dot.configure(text_color=C_SUCCESS)
+            self._session_lbl.configure(
+                text=db_session["name"], text_color=C_ACCENT)
+
+            self._start_btn.grid_remove()
+            self._end_btn.grid()
+
+            self._refresh_info_strip()
+            self._update_count()
+
+        # ── Case 3: Session ended ───────────────────────────────
+        elif current_id is not None and new_id is None:
+            self.active_session = None
+            self._last_session_id = None
+
+            self._dot.configure(text_color=C_MUTED)
+            self._session_lbl.configure(
+                text="No active session", text_color=C_MUTED)
+
+            self._end_btn.grid_remove()
+            self._start_btn.grid()
+            self._count_lbl.configure(text="Start a Session")
+
+            self._refresh_info_strip()
+            self._set_mode("in")
+
+        # ── Case 4: Different session (rare but possible) ───────
+        elif current_id != new_id:
+            self.active_session = db_session
+            self._last_session_id = new_id
+
+            self._session_lbl.configure(
+                text=db_session["name"], text_color=C_ACCENT)
+
+            self._refresh_info_strip()
+            self._update_count()
+
+        # ── Schedule next poll ──────────────────────────────────
+        self._safe_after(5000, self._tick)
     # ------------------------------------------------------------------
     # RFID
     # ------------------------------------------------------------------
@@ -423,62 +482,76 @@ class ScanScreen(ctk.CTkFrame):
             ev = EventSession(
                 name=data["name"],
                 date=data["date"],
-                estimated_attendees=data.get("estimated_attendees"))
+                estimated_attendees=data.get("estimated_attendees"),
+                academic_period_id=data.get("academic_period_id"),
+            )
             db.add(ev)
             db.flush()  # get ev.id before commit
 
             for p in data["periods"]:
                 period = SessionPeriod(
-                    session_id      = ev.id,
-                    name            = p["name"],
-                    time_in_start   = p["time_in_start"],
-                    time_in_end     = p["time_in_end"],
-                    grace_minutes   = p["grace_minutes"],
-                    late_enabled    = p["late_enabled"],
-                    late_start      = p["late_start"],
-                    timeout_enabled = p["timeout_enabled"],
-                    timeout_start   = p["timeout_start"],
-                    timeout_end     = p["timeout_end"],
-                    sort_order      = p["sort_order"],
+                    session_id=ev.id,
+                    name=p["name"],
+                    time_in_start=p["time_in_start"],
+                    time_in_end=p["time_in_end"],
+                    grace_minutes=p["grace_minutes"],
+                    late_enabled=p["late_enabled"],
+                    late_start=p["late_start"],
+                    timeout_enabled=p["timeout_enabled"],
+                    timeout_start=p["timeout_start"],
+                    timeout_end=p["timeout_end"],
+                    sort_order=p["sort_order"],
                 )
                 db.add(period)
                 periods.append(period)
 
             db.commit()
             db.refresh(ev)
+
+            db.query(EventSession).filter(
+                EventSession.is_active == 1
+            ).update({"is_active": 0})
+
+            # Activate this session
+            ev.is_active = 1
+            db.commit()
+
             for p in periods:
                 db.refresh(p)
+
             session_id = ev.id
+
             # Detach objects so they can be used outside the session
             periods_data = [
                 {
-                    "id":              p.id,
-                    "name":            p.name,
-                    "sort_order":      p.sort_order,
-                    "time_in_start":   p.time_in_start,
-                    "time_in_end":     p.time_in_end,
-                    "grace_minutes":   p.grace_minutes,
-                    "late_enabled":    p.late_enabled,
-                    "late_start":      p.late_start,
+                    "id": p.id,
+                    "name": p.name,
+                    "sort_order": p.sort_order,
+                    "time_in_start": p.time_in_start,
+                    "time_in_end": p.time_in_end,
+                    "grace_minutes": p.grace_minutes,
+                    "late_enabled": p.late_enabled,
+                    "late_start": p.late_start,
                     "timeout_enabled": p.timeout_enabled,
-                    "timeout_start":   p.timeout_start,
-                    "timeout_end":     p.timeout_end,
+                    "timeout_start": p.timeout_start,
+                    "timeout_end": p.timeout_end,
                 }
                 for p in periods
             ]
+
         finally:
             db.close()
 
         self.active_session = {
-            "id":                  session_id,
-            "name":                data["name"],
-            "periods":             periods_data,
-            "count":               0,
+            "id": session_id,
+            "name": data["name"],
+            "periods": periods_data,
+            "count": 0,
             "estimated_attendees": data.get("estimated_attendees"),
-            "breakdown":           {"present": 0, "late": 0},
-            "period_stats": {}
+            "breakdown": {"present": 0, "late": 0},
+            "period_stats": {},
         }
- 
+
         self._dot.configure(text_color=C_SUCCESS)
         self._session_lbl.configure(text=data["name"], text_color=C_ACCENT)
         self._cutoff_lbl.configure(text="")
@@ -486,14 +559,21 @@ class ScanScreen(ctk.CTkFrame):
         self._end_btn.grid()
         self._refresh_info_strip()
         self._update_count()
-        self._safe_after(30_000, self._tick)
+        # self._safe_after(30_000, self._tick)   # simulate session change after 30s for testing
 
     def _end_session(self):
         if not messagebox.askyesno(
                 "End Session",
                 f"End session '{self.active_session['name']}'?"):
             return
-        self.active_session = None
+        db = SessionLocal()
+        try:
+            db.query(EventSession).filter(
+                EventSession.is_active == 1
+            ).update({"is_active": 0})
+            db.commit()
+        finally:
+            db.close()
         self._dot.configure(text_color=C_MUTED)
         self._session_lbl.configure(text="No active session", text_color=C_MUTED)
         self._cutoff_lbl.configure(text="")
@@ -613,6 +693,7 @@ class ScanScreen(ctk.CTkFrame):
                     return
 
                 existing.time_out = now
+                existing.terminal_id = terminal_id
                 db.commit()
                 ps = self.active_session.setdefault("period_stats", {})
                 pid = period["sort_order"]
@@ -665,7 +746,8 @@ class ScanScreen(ctk.CTkFrame):
                 session_id=self.active_session["id"],
                 period_id=period["id"],
                 status=status,
-                time_in=now))
+                time_in=now,
+                terminal_id=terminal_id))
             db.commit()
 
             self._increment_breakdown(status)

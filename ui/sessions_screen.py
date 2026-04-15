@@ -95,10 +95,9 @@ class SessionDetailPanel(ctk.CTkFrame):
 
         self._stat_labels = {}
         for i, (key, label, color) in enumerate([
-            ("present",   "Present",   C_SUCCESS),
+            ("total",   "Present",   C_SUCCESS),
             ("late",      "Late",      C_WARNING),
             ("absent",    "Absent",    C_ERROR),
-            ("total",     "Total",     C_ACCENT),
             ("estimated", "Expected",  C_MUTED),
             ("rate",      "Rate %",    C_TEXT),
         ]):
@@ -304,14 +303,20 @@ class SessionDetailPanel(ctk.CTkFrame):
         self._xlsx_btn.configure(state="normal")
         self._pdf_btn.configure(state="normal")
 
-        for key in ("present", "late", "total", "absent"):
-            self._stat_labels[key].configure(text=str(session_data[key]))
+        total_present = session_data["present"] + session_data["late"]
+
+        self._stat_labels["total"].configure(
+            text=str(total_present)
+        )
+
+        self._stat_labels["late"].configure(text=str(session_data["late"]))
+        self._stat_labels["absent"].configure(text=str(session_data["absent"]))
 
         est = session_data.get("estimated_attendees")
         self._stat_labels["estimated"].configure(
             text=str(est) if est else "—")
         if est and est > 0:
-            rate = min(round(session_data["total"] / est * 100, 1), 100.0)
+            rate = min(round(total_present / est * 100, 1), 100.0)
             rate_color = (C_SUCCESS if rate >= 75
                           else C_WARNING if rate >= 50 else C_ERROR)
             self._stat_labels["rate"].configure(
@@ -392,7 +397,7 @@ class SessionDetailPanel(ctk.CTkFrame):
         self._title_lbl.configure(text="Select a session", text_color=C_MUTED)
         self._xlsx_btn.configure(state="disabled")
         self._pdf_btn.configure(state="disabled")
-        for key in ("present", "late", "total", "estimated", "rate", "absent"):
+        for key in ("total", "late", "estimated", "rate", "absent"):
             self._stat_labels[key].configure(text="—")
         for r, d in zip(self._row_frames, self._row_dividers):
             r.pack_forget()

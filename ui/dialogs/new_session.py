@@ -1,10 +1,11 @@
 import tkinter as tk
 from tkinter import messagebox
+from webbrowser import get
 import customtkinter as ctk
 
 from ui.theme import C_ACCENT, C_BG, C_BORDER, C_ERROR, C_MUTED, C_SURFACE, C_TEXT
 from datetime import datetime
-from database import SessionLocal, Student, Program, Department
+from database import SessionLocal, Student, Program, Department, AcademicPeriod
 from db.students_db import YEAR_LEVEL_LABELS
 from ui.components.period_row import PeriodRow
 from sqlalchemy import func
@@ -51,6 +52,20 @@ def _fetch_group_counts() -> dict:
     finally:
         db.close()
 
+
+def get_active_academic_period():
+    """
+    Returns the active AcademicPeriod object, or None.
+    """
+    db = SessionLocal()
+    try:
+        return (
+            db.query(AcademicPeriod)
+            .filter(AcademicPeriod.is_active == 1)
+            .first()
+        )
+    finally:
+        db.close()
 
 # ── NewSessionDialog ──────────────────────────────────────────────────────────
 
@@ -298,6 +313,7 @@ class NewSessionDialog(ctk.CTkToplevel):
             "date": session_date,
             "estimated_attendees": estimated,
             "periods": periods,
+            "academic_period_id": get_active_academic_period().id if get_active_academic_period() else None,
         })
         self.wait_window(dialog)
 
@@ -309,6 +325,7 @@ class NewSessionDialog(ctk.CTkToplevel):
             "date": session_date,
             "estimated_attendees": estimated,
             "periods": periods,
+            "academic_period_id": get_active_academic_period().id if get_active_academic_period() else None,
         }
         self.destroy()
 
@@ -370,6 +387,7 @@ class ConfirmSessionDialog(ctk.CTkToplevel):
         ctk.CTkLabel(info, text=f"Name: {d['name']}", text_color=C_TEXT).pack(anchor="w")
         ctk.CTkLabel(info, text=f"Date: {d['date']}", text_color=C_TEXT).pack(anchor="w")
         ctk.CTkLabel(info, text=f"Estimated: {est}", text_color=C_TEXT).pack(anchor="w")
+        ctk.CTkLabel(info, text=f"Academic Period: {d['academic_period_id']}", text_color=C_TEXT).pack(anchor="w")
 
         ctk.CTkFrame(self, fg_color=C_BORDER, height=1).pack(fill="x", padx=20, pady=10)
 

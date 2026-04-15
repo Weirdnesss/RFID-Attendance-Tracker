@@ -170,6 +170,7 @@ class Session(Base):
     academic_period_id  = Column(Integer,
                                  ForeignKey("academic_periods.id"),
                                  nullable=True)
+    is_active = Column(Integer, default=0)
 
     academic_period    = relationship("AcademicPeriod", back_populates="sessions")
     periods            = relationship(
@@ -306,6 +307,7 @@ class Attendance(Base):
     )
     time_in  = Column(DateTime, nullable=True)
     time_out = Column(DateTime, nullable=True)
+    terminal_id = Column(String(50), nullable=True)
 
     student = relationship("Student", back_populates="attendance_records")
     session = relationship("Session",       back_populates="attendance_records")

@@ -76,7 +76,6 @@ class StudentDetailPanel(ctk.CTkFrame):
         for key, label, color in [
             ("present", "Present",  C_SUCCESS),
             ("late",    "Late",     C_WARNING),
-            ("total",   "Sessions", C_ACCENT),
         ]:
             pill = ctk.CTkFrame(stats, fg_color=C_SURFACE,
                                 corner_radius=8, border_width=1, border_color=color)
@@ -217,15 +216,18 @@ class StudentDetailPanel(ctk.CTkFrame):
         self._yearlevel_lbl.configure(
             text=f"·  {data['yearlevel']}", text_color=C_MUTED)
 
-
-        for key in ("present", "late", "total"):
-            self._stat_labels[key].configure(text=str(data.get(key, 0)))
-
-        self._current_student_id = data["student_id"]   # ← store ID, not records
+        # ✅ FIX: set current student
+        self._current_student_id = data["student_id"]
         self._current_page = 0
-        self._total_records = 0
 
-        # peek at total to decide whether to show page bar
+        present = data.get("present", 0)
+        late = data.get("late", 0)
+
+        total_attended = present + late
+
+        self._stat_labels["present"].configure(text=str(total_attended))
+        self._stat_labels["late"].configure(text=str(late))
+
         total, _ = _fetch_student_attendance(data["student_id"], offset=0, limit=1)
         if total == 0:
             self._page_bar.grid_remove()
@@ -240,7 +242,7 @@ class StudentDetailPanel(ctk.CTkFrame):
         self._program_lbl.configure(text="")
         self._yearlevel_lbl.configure(text="")
         self._term_lbl.configure(text="")
-        for key in ("present", "late", "total"):
+        for key in ("present", "late"):
             self._stat_labels[key].configure(text="—")
 
         self._total_records    = 0
