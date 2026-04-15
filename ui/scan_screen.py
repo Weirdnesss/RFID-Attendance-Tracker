@@ -247,7 +247,7 @@ class ScanScreen(ctk.CTkFrame):
             active = (t_in_s is not None and t_in_e is not None
                     and t_in_s <= now <= t_in_e)
 
-            period_key = p.get("sort_order", i)
+            period_key = p.get("id")
             pd_stats = self.active_session.get("period_stats", {}).get(period_key, {})
             scanned  = pd_stats.get("scanned", 0)
             late     = pd_stats.get("late", 0)
@@ -510,7 +510,7 @@ class ScanScreen(ctk.CTkFrame):
 
             db.query(EventSession).filter(
                 EventSession.is_active == 1
-            ).update({"is_active": 0})
+            ).update({"is_active": 0, "active_flag": None})
 
             # Activate this session
             ev.is_active = 1
@@ -570,7 +570,7 @@ class ScanScreen(ctk.CTkFrame):
         try:
             db.query(EventSession).filter(
                 EventSession.is_active == 1
-            ).update({"is_active": 0})
+            ).update({"is_active": 0, "active_flag": None})
             db.commit()
         finally:
             db.close()
@@ -696,7 +696,7 @@ class ScanScreen(ctk.CTkFrame):
                 existing.terminal_id = terminal_id
                 db.commit()
                 ps = self.active_session.setdefault("period_stats", {})
-                pid = period["sort_order"]
+                pid = period["id"]
 
                 if pid not in ps:
                     ps[pid] = {"scanned": 0, "late": 0, "timed_out": 0}
@@ -709,6 +709,7 @@ class ScanScreen(ctk.CTkFrame):
                             now.strftime("%I:%M:%S %p"))
                 self.active_session["count"] += 1
                 self._update_count()
+                self._refresh_info_strip()
                 return
 
             # ── SCAN IN mode ─────────────────────────────────────────
@@ -761,6 +762,7 @@ class ScanScreen(ctk.CTkFrame):
                           now.strftime("%I:%M:%S %p"))
             self.active_session["count"] += 1
             self._update_count()
+            self._refresh_info_strip()
         finally:
             db.close()
 

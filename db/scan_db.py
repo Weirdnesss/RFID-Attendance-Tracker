@@ -5,6 +5,51 @@ from sqlalchemy import func
 from database import SessionLocal, Session as EventSession, SessionPeriod, Attendance, Program, Student
 from db.students_db import YEAR_LEVEL_LABELS
 
+from sqlalchemy.exc import IntegrityError
+
+def start_session(name, date, estimated_attendees, periods, academic_period_id, terminal_id):
+    db = SessionLocal()
+    try:
+        new_session = EventSession(
+            name=name,
+            date=date,
+            estimated_attendees=estimated_attendees,
+            academic_period_id=academic_period_id,
+            is_active=1,
+            active_flag=1,  # unique — will raise IntegrityError if one exists
+        )
+        db.add(new_session)
+        db.flush()  # get the new session ID before adding periods
+
+        for p in periods:
+            db.add(SessionPeriod(
+                session_id=new_session.id,
+                **p
+            ))
+
+        db.commit()
+        return True, new_session.id, "Session started"
+
+    except IntegrityError:
+        db.rollback()
+        return False, None, "A session is already active on another PC"
+    finally:
+        db.close()
+
+
+def end_session(session_id):
+    db = SessionLocal()
+    try:
+        session = db.query(EventSession).filter(EventSession.id == session_id).first()
+        if session:
+            session.is_active = 0
+            session.active_flag = None  # releases the unique slot
+            db.commit()
+            return True
+        return False
+    finally:
+        db.close()
+
 def _fetch_group_counts():
     """Return {(program, yearlevel): count} from DB."""
     db = SessionLocal()

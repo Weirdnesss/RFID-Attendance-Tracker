@@ -170,7 +170,8 @@ class Session(Base):
     academic_period_id  = Column(Integer,
                                  ForeignKey("academic_periods.id"),
                                  nullable=True)
-    is_active = Column(Integer, default=0)
+    is_active   = Column(Integer, default=0)
+    active_flag = Column(Integer, default=None, unique=True)  # NULL = inactive, 1 = active (unique enforces one active session)
 
     academic_period    = relationship("AcademicPeriod", back_populates="sessions")
     periods            = relationship(

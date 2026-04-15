@@ -2,6 +2,7 @@ import tkinter as tk
 from tkinter import messagebox
 from webbrowser import get
 import customtkinter as ctk
+import os
 
 from ui.theme import C_ACCENT, C_BG, C_BORDER, C_ERROR, C_MUTED, C_SURFACE, C_TEXT
 from datetime import datetime
@@ -320,16 +321,39 @@ class NewSessionDialog(ctk.CTkToplevel):
         if not dialog.result:
             return
 
-        self.result = {
-            "name": name,
-            "date": session_date,
-            "estimated_attendees": estimated,
-            "periods": periods,
-            "academic_period_id": get_active_academic_period().id if get_active_academic_period() else None,
-        }
-        self.destroy()
+        from db.scan_db import start_session
 
-    # TODO: wire to radio buttons when added to the UI
+        terminal_id = os.getenv("TERMINAL_ID", "PC1")
+
+        success, session_id, message = start_session(
+            name=name,
+            date=session_date,
+            estimated_attendees=estimated,
+            periods=periods,
+            academic_period_id=get_active_academic_period().id if get_active_academic_period() else None,
+            terminal_id=terminal_id,
+        )
+
+        if success:
+            self.result = {
+                "id": session_id, 
+                "name": name,
+                "date": session_date,
+                "estimated_attendees": estimated,
+                "periods": periods,
+                "academic_period_id": get_active_academic_period().id if get_active_academic_period() else None,
+                "started": True
+            }
+            self.destroy()
+        else:
+            # Another PC beat us to it — let polling pick up their session
+            messagebox.showinfo(
+                "Session Already Active",
+                f"{message}\n\nLoading the active session now..."
+            )
+            self.result = {"id": None, "started": False}
+            self.destroy()
+
     def _on_estimate_mode_change(self):
         mode = self._estimate_mode.get()
         if mode == "auto":
@@ -387,7 +411,6 @@ class ConfirmSessionDialog(ctk.CTkToplevel):
         ctk.CTkLabel(info, text=f"Name: {d['name']}", text_color=C_TEXT).pack(anchor="w")
         ctk.CTkLabel(info, text=f"Date: {d['date']}", text_color=C_TEXT).pack(anchor="w")
         ctk.CTkLabel(info, text=f"Estimated: {est}", text_color=C_TEXT).pack(anchor="w")
-        ctk.CTkLabel(info, text=f"Academic Period: {d['academic_period_id']}", text_color=C_TEXT).pack(anchor="w")
 
         ctk.CTkFrame(self, fg_color=C_BORDER, height=1).pack(fill="x", padx=20, pady=10)
 
