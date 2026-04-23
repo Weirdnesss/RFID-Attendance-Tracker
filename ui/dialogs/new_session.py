@@ -6,10 +6,12 @@ import os
 
 from ui.theme import C_ACCENT, C_BG, C_BORDER, C_ERROR, C_MUTED, C_SURFACE, C_TEXT
 from datetime import datetime
-from database import SessionLocal, Student, Program, Department, AcademicPeriod
+from database import SessionLocal, Student, Program, Department, AcademicPeriod, Session as EventSession
 from db.students_db import YEAR_LEVEL_LABELS
+from db.scan_db import start_session, get_session_by_id
 from ui.components.period_row import PeriodRow
 from sqlalchemy import func
+from sqlalchemy.orm import joinedload
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────
@@ -162,16 +164,16 @@ class NewSessionDialog(ctk.CTkToplevel):
             text_color=C_TEXT, height=32,
         ).grid(row=0, column=0, sticky="ew", padx=(0, 6))
 
-        self._group_btn = ctk.CTkButton(
-            est_field_row,
-            text="Select Groups",
-            width=120,
-            fg_color=C_BORDER,
-            hover_color=C_MUTED,
-            text_color=C_TEXT,
-            command=self._open_group_selector,
-        )
-        self._group_btn.grid(row=0, column=1)
+        # self._group_btn = ctk.CTkButton(
+        #     est_field_row,
+        #     text="Select Groups",
+        #     width=120,
+        #     fg_color=C_BORDER,
+        #     hover_color=C_MUTED,
+        #     text_color=C_TEXT,
+        #     command=self._open_group_selector,
+        # )
+        # self._group_btn.grid(row=0, column=1)
 
         self._group_info_lbl = ctk.CTkLabel(
             top, text="",
@@ -779,4 +781,145 @@ class StudentGroupSelectorDialog(ctk.CTkToplevel):
             for key, cnt in dept_map.items()
             if self._check_vars[key].get()
         )
+        self.destroy()
+
+class ChooseSessionDialog(ctk.CTkToplevel):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.title("Choose Session")
+        self.geometry("520x420")
+        self.configure(fg_color=C_SURFACE)
+        self.grab_set()
+
+        self.result       = None
+        self._selected_id: int | None = None
+        self._row_frames  = {}      # must be here, before _build_ui
+        self._confirm_btn = None
+        self._build_ui()
+
+    def _build_ui(self):
+        # Header
+        hdr = ctk.CTkFrame(self, fg_color=C_SURFACE, corner_radius=0, height=60)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        ctk.CTkLabel(
+            hdr, text="Choose Session",
+            font=ctk.CTkFont(size=16, weight="bold"),
+            text_color=C_TEXT,
+        ).pack(anchor="w", padx=24, pady=(14, 2))
+        ctk.CTkLabel(
+            hdr, text="Select an active session to scan into",
+            font=ctk.CTkFont(size=12),
+            text_color=C_MUTED,
+        ).pack(anchor="w", padx=24)
+
+        ctk.CTkFrame(self, fg_color=C_BORDER, height=1).pack(fill="x")
+
+        # Footer — built BEFORE the list so _confirm_btn exists when _select fires
+        ctk.CTkFrame(self, fg_color=C_BORDER, height=1).pack(fill="x", side="bottom")
+        foot = ctk.CTkFrame(self, fg_color="transparent")
+        foot.pack(fill="x", padx=24, pady=14, side="bottom")
+        ctk.CTkButton(
+            foot, text="Cancel",
+            fg_color="transparent",
+            border_color=C_BORDER, border_width=1,
+            text_color=C_MUTED, hover_color=C_SURFACE,
+            command=self.destroy,
+        ).pack(side="right", padx=(8, 0))
+        self._confirm_btn = ctk.CTkButton(
+            foot, text="Join Session",
+            fg_color=C_ACCENT, hover_color="#8aabff",
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=13, weight="bold"),
+            state="disabled",
+            command=self._accept,
+        )
+        self._confirm_btn.pack(side="right")
+
+        # Session list — loaded last, after _confirm_btn exists
+        self._list_frame = ctk.CTkScrollableFrame(
+            self, fg_color="transparent", corner_radius=0)
+        self._list_frame.pack(fill="both", expand=True, padx=16, pady=12)
+        self._list_frame.grid_columnconfigure(0, weight=1)
+
+        self._load_sessions()
+
+    def _load_sessions(self):
+        db = SessionLocal()
+        try:
+            sessions = (
+                db.query(EventSession)
+                .options(joinedload(EventSession.periods))
+                .filter(EventSession.is_active == 1)
+                .order_by(EventSession.date.desc())
+                .all()
+            )
+            # Force load periods while session is still open
+            for s in sessions:
+                _ = len(s.periods)
+        finally:
+            db.close()
+
+        if not sessions:
+            ctk.CTkLabel(
+                self._list_frame,
+                text="No active sessions found.",
+                font=ctk.CTkFont(size=13),
+                text_color=C_MUTED,
+            ).pack(pady=40)
+            return
+
+        for s in sessions:
+            self._build_row(s)
+
+    def _build_row(self, s):
+        row = ctk.CTkFrame(
+            self._list_frame,
+            fg_color=C_BG, corner_radius=8,
+            border_width=1, border_color=C_BORDER,
+        )
+        row.pack(fill="x", pady=4)
+        row.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            row, text=s.name,
+            font=ctk.CTkFont(size=13, weight="bold"),
+            text_color=C_TEXT, anchor="w",
+        ).grid(row=0, column=0, sticky="w", padx=14, pady=(10, 2))
+
+        period_count = len(s.periods)
+        meta = (f"{s.date}  ·  "
+                f"{s.estimated_attendees or '—'} expected  ·  "
+                f"{period_count} period{'s' if period_count != 1 else ''}")
+        ctk.CTkLabel(
+            row, text=meta,
+            font=ctk.CTkFont(size=11),
+            text_color=C_MUTED, anchor="w",
+        ).grid(row=1, column=0, sticky="w", padx=14, pady=(0, 10))
+
+        row.bind("<Button-1>", lambda e, sid=s.id: self._select(sid))
+        for child in row.winfo_children():
+            child.bind("<Button-1>", lambda e, sid=s.id: self._select(sid))
+
+        self._row_frames[s.id] = row
+
+    def _select(self, session_id: int):
+        # Reset all rows
+        for sid, frame in self._row_frames.items():
+            frame.configure(
+                border_color=C_BORDER,
+                fg_color=C_BG,
+            )
+        # Highlight selected
+        self._row_frames[session_id].configure(
+            border_color=C_ACCENT,
+            fg_color=C_SURFACE,
+        )
+        self._selected_id = session_id
+        self._confirm_btn.configure(state="normal")
+
+    def _accept(self):
+        if self._selected_id is None:
+            return
+        self.result = get_session_by_id(self._selected_id)
         self.destroy()

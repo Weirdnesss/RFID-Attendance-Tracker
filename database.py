@@ -167,11 +167,12 @@ class Session(Base):
     date                = Column(Date, nullable=False, default=date.today)
     estimated_attendees = Column(Integer, nullable=True)
     created_at          = Column(DateTime, default=datetime.now)
+    ended_at            = Column(DateTime, nullable=True, default=None)
     academic_period_id  = Column(Integer,
                                  ForeignKey("academic_periods.id"),
                                  nullable=True)
     is_active   = Column(Integer, default=0)
-    active_flag = Column(Integer, default=None, unique=True)  # NULL = inactive, 1 = active (unique enforces one active session)
+    active_flag = Column(Integer, default=None)  # NULL = inactive, 1 = active (unique enforces one active session)
 
     academic_period    = relationship("AcademicPeriod", back_populates="sessions")
     periods            = relationship(
@@ -181,6 +182,7 @@ class Session(Base):
         cascade="all, delete-orphan",
     )
     attendance_records = relationship("Attendance", back_populates="session")
+    ended_at    = Column(DateTime, nullable=True, default=None)
 
     def __repr__(self):
         return f"<Session {self.id} — {self.name} ({self.date})>"

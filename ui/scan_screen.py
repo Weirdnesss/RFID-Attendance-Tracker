@@ -13,13 +13,13 @@ from tkinter import messagebox
 import customtkinter as ctk
 from datetime import datetime, time as dtime
 import os
-from db.scan_db import get_active_session
+from db.scan_db import get_session_by_id
 
 terminal_id = os.getenv("TERMINAL_ID", "UNKNOWN")
 
 from ui.components.scan_area import ScanArea
 from ui.components.log_entry import LogEntry
-from ui.dialogs.new_session import NewSessionDialog, ConfirmSessionDialog, StudentGroupSelectorDialog
+from ui.dialogs.new_session import NewSessionDialog, ConfirmSessionDialog, StudentGroupSelectorDialog, ChooseSessionDialog
 from db.scan_db import _fetch_group_counts
 
 from sqlalchemy import func
@@ -56,7 +56,8 @@ class ScanScreen(ctk.CTkFrame):
         self._listener          = None
         self._scan_mode         = "in"   # "in" or "out"
         self._after_ids         = []
-        self._last_session_id   = None
+        self._selected_session_id   = None
+        self._last_session_id     = None
         self._last_render_state = None
         self._pill_widgets      = {}   # {period_id: {frame, scanned, late, timed_out, ...}}
         self._summary_widgets   = {}   # holds the rightmost summary pill widgets
@@ -76,7 +77,6 @@ class ScanScreen(ctk.CTkFrame):
         return aid
 
     def _get_render_state(self, session):
-        """Cheap fingerprint of session state — avoids unnecessary redraws."""
         if not session:
             return None
         return (
@@ -85,6 +85,14 @@ class ScanScreen(ctk.CTkFrame):
             tuple(
                 (
                     p["id"],
+                    p["time_in_start"],
+                    p["time_in_end"],
+                    p["late_enabled"],
+                    p["late_start"],
+                    p["grace_minutes"],
+                    p["timeout_enabled"],
+                    p["timeout_start"],
+                    p["timeout_end"],
                     session.get("period_stats", {}).get(p["id"], {}).get("scanned", 0),
                     session.get("period_stats", {}).get(p["id"], {}).get("late", 0),
                     session.get("period_stats", {}).get(p["id"], {}).get("timed_out", 0),
@@ -122,18 +130,18 @@ class ScanScreen(ctk.CTkFrame):
         self._cutoff_lbl.grid(row=0, column=2, padx=12)
 
         self._start_btn = ctk.CTkButton(
-            sbar, text="+ Start Session", width=130,
+            sbar, text="Choose Session", width=130,
             fg_color=C_ACCENT, hover_color="#8aabff", text_color="#ffffff",
             font=ctk.CTkFont(size=12, weight="bold"),
-            command=self._start_session)
+            command=self._choose_session)
         self._start_btn.grid(row=0, column=3, padx=(0, 8))
 
         self._end_btn = ctk.CTkButton(
-            sbar, text="End Session", width=110,
+            sbar, text="Leave Session", width=110,
             fg_color="transparent", border_color=C_ERROR, border_width=1,
             text_color=C_ERROR, hover_color="#2a1a1a",
             font=ctk.CTkFont(size=12, weight="bold"),
-            command=self._end_session)
+            command=self._leave_session)
         self._end_btn.grid(row=0, column=4, padx=(0, 8))
         self._end_btn.grid_remove()
 
@@ -205,11 +213,6 @@ class ScanScreen(ctk.CTkFrame):
             rbar, text="● Waiting for reader...",
             font=ctk.CTkFont(size=12), text_color=C_MUTED)
         self._reader_lbl.grid(row=0, column=0, padx=20, pady=8)
-
-        self._count_lbl = ctk.CTkLabel(
-            rbar, text="Start a session",
-            font=ctk.CTkFont(size=12), text_color=C_MUTED)
-        self._count_lbl.grid(row=0, column=2, padx=20)
 
     def _dev_scan(self):
         sid = self._dev_id_var.get().strip()
@@ -467,17 +470,17 @@ class ScanScreen(ctk.CTkFrame):
             sw["pct_lbl"].configure(text=f"{pct}%")
             sw["bar_fill"].configure(width=fill_w)
 
-    def _update_session_summary(self):
-        """Update the bottom-bar count label."""
-        if not self.active_session:
-            return
-        n_total = self.active_session.get("count", 0)
-        est     = self.active_session.get("estimated_attendees")
-        if est:
-            pct = min(round(n_total / est * 100), 100)
-            self._count_lbl.configure(text=f"{n_total}/{est} expected scans ({pct}%)")
-        else:
-            self._count_lbl.configure(text=f"Total scans this session: {n_total}")
+    # def _update_session_summary(self):
+    #     """Update the bottom-bar count label."""
+    #     if not self.active_session:
+    #         return
+    #     n_total = self.active_session.get("count", 0)
+    #     est     = self.active_session.get("estimated_attendees")
+    #     if est:
+    #         pct = min(round(n_total / est * 100), 100)
+    #         self._count_lbl.configure(text=f"{n_total}/{est} expected scans ({pct}%)")
+    #     else:
+    #         self._count_lbl.configure(text=f"Total scans this session: {n_total}")
 
     # ------------------------------------------------------------------
     # Tick — poll DB every 5 s, update UI only when state changed
@@ -487,7 +490,10 @@ class ScanScreen(ctk.CTkFrame):
         if not self.winfo_exists():
             return
 
-        db_session = get_active_session()
+        if self._selected_session_id is None:
+            self._safe_after(5000, self._tick)
+            return
+        db_session = get_session_by_id(self._selected_session_id)
         current_id = self._last_session_id
         new_id     = db_session["id"] if db_session else None
 
@@ -496,10 +502,10 @@ class ScanScreen(ctk.CTkFrame):
             if db_session:
                 new_state = self._get_render_state(db_session)
                 if new_state != self._last_render_state:
-                    self.active_session     = db_session
-                    self._last_render_state = new_state
-                    self._update_pills()
-                    self._update_session_summary()
+                        self.active_session     = db_session
+                        self._last_render_state = new_state
+                        self._build_pills()   # was _update_pills()
+                        self._update_pills()
 
         # ── Case 2: New session started ──────────────────────────────────────
         elif current_id is None and new_id is not None:
@@ -514,7 +520,6 @@ class ScanScreen(ctk.CTkFrame):
 
             self._build_pills()
             self._update_pills()
-            self._update_session_summary()
             self._last_render_state = self._get_render_state(db_session)
 
         # ── Case 3: Session ended ────────────────────────────────────────────
@@ -549,7 +554,6 @@ class ScanScreen(ctk.CTkFrame):
 
             self._build_pills()
             self._update_pills()
-            self._update_session_summary()
             self._last_render_state = self._get_render_state(db_session)
 
         self._safe_after(5000, self._tick)
@@ -588,39 +592,73 @@ class ScanScreen(ctk.CTkFrame):
     # Session
     # ------------------------------------------------------------------
 
-    def _start_session(self):
-        dlg = NewSessionDialog(self)
+    # def _start_session(self):
+    #     dlg = NewSessionDialog(self)
+    #     self.wait_window(dlg)
+
+    #     if not dlg.result or not dlg.result.get("started"):
+    #         return
+
+    #     # Force immediate refresh instead of waiting 5 s
+    #     self._last_session_id = None
+    #     self._tick()
+
+    # def _end_session(self):
+    #     if not messagebox.askyesno(
+    #             "End Session",
+    #             f"End session '{self.active_session['name']}'?"):
+    #         return
+    #     db = SessionLocal()
+    #     try:
+    #         db.query(EventSession).filter(
+    #             EventSession.is_active == 1
+    #         ).update({"is_active": 0, "active_flag": None})
+    #         db.commit()
+    #     finally:
+    #         db.close()
+
+    #     self._dot.configure(text_color=C_MUTED)
+    #     self._session_lbl.configure(text="No active session", text_color=C_MUTED)
+    #     self._cutoff_lbl.configure(text="")
+    #     self._end_btn.grid_remove()
+    #     self._start_btn.grid()
+    #     self._count_lbl.configure(text="Start a Session")
+    #     self._set_mode("in")
+    #     # _tick will handle hiding the strip and clearing pills on next poll
+
+    def _choose_session(self):
+        dlg = ChooseSessionDialog(self)
         self.wait_window(dlg)
 
-        if not dlg.result or not dlg.result.get("started"):
+        if not dlg.result:
             return
 
-        # Force immediate refresh instead of waiting 5 s
-        self._last_session_id = None
+        self._selected_session_id = dlg.result["id"]
+        self._last_session_id = None  # force _tick to treat this as a new session
         self._tick()
 
-    def _end_session(self):
+    def _leave_session(self):
         if not messagebox.askyesno(
-                "End Session",
-                f"End session '{self.active_session['name']}'?"):
+                "Leave Session",
+                f"Leave session '{self.active_session['name']}'?"):
             return
-        db = SessionLocal()
-        try:
-            db.query(EventSession).filter(
-                EventSession.is_active == 1
-            ).update({"is_active": 0, "active_flag": None})
-            db.commit()
-        finally:
-            db.close()
+
+        self._selected_session_id = None
+        self.active_session       = None
+        self._last_session_id     = None
 
         self._dot.configure(text_color=C_MUTED)
         self._session_lbl.configure(text="No active session", text_color=C_MUTED)
         self._cutoff_lbl.configure(text="")
         self._end_btn.grid_remove()
         self._start_btn.grid()
-        self._count_lbl.configure(text="Start a Session")
+        self._info_strip.grid_remove()
+        for w in self._pills_frame.winfo_children():
+            w.destroy()
+        self._pill_widgets.clear()
+        self._summary_widgets.clear()
+        self._last_render_state = None
         self._set_mode("in")
-        # _tick will handle hiding the strip and clearing pills on next poll
 
     def _set_mode(self, mode: str):
         self._scan_mode = mode
@@ -734,7 +772,6 @@ class ScanScreen(ctk.CTkFrame):
                               now.strftime("%I:%M:%S %p"))
                 self.active_session["count"] += 1
                 self._update_pills()
-                self._update_session_summary()
                 return
 
             # ── SCAN IN ──────────────────────────────────────────────────────
@@ -781,7 +818,6 @@ class ScanScreen(ctk.CTkFrame):
                           now.strftime("%I:%M:%S %p"))
             self.active_session["count"] += 1
             self._update_pills()
-            self._update_session_summary()
         finally:
             db.close()
 

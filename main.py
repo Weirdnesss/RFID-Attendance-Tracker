@@ -27,6 +27,7 @@ from ui.theme import (C_BG, C_SURFACE, C_BORDER, C_TEXT, C_MUTED, C_SUCCESS, C_E
 from ui.sessions_screen import SessionsScreen
 from ui.students_screen import StudentsScreen
 from ui.components.nav_button import NavButton
+from ui.admin_screen import AdminScreen
 from database       import test_connection, create_tables
 
 ctk.set_appearance_mode("dark")
@@ -37,7 +38,7 @@ ctk.set_appearance_mode("dark")
 # ---------------------------------------------------------------------------
 
 class App(ctk.CTk):
-    SCREENS = ["Scan", "Students", "Sessions"]
+    SCREENS = ["Scan", "Students", "Sessions", "Admin"]
 
     def __init__(self):
         super().__init__()
@@ -88,7 +89,8 @@ class App(ctk.CTk):
         # Nav buttons
         icons = {"Scan": "  ⬡  Scan",
                  "Students": "  ◈  Students",
-                 "Sessions": "  ◇  Sessions"}
+                 "Sessions": "  ◇  Sessions",
+                 "Admin": "  ⬢  Admin"}
 
         for i, name in enumerate(self.SCREENS):
             btn = NavButton(
@@ -136,6 +138,9 @@ class App(ctk.CTk):
 
         # Sessions
         self._screens["Sessions"] = SessionsScreen(container)
+
+        # Admin
+        self._screens["Admin"] = AdminScreen(container)
 
         # Place all screens in the same cell — only one visible at a time
         for screen in self._screens.values():

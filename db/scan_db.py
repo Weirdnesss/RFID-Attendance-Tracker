@@ -36,7 +36,6 @@ def start_session(name, date, estimated_attendees, periods, academic_period_id, 
     finally:
         db.close()
 
-
 def end_session(session_id):
     db = SessionLocal()
     try:
@@ -49,6 +48,42 @@ def end_session(session_id):
         return False
     finally:
         db.close()
+
+def _choose_session(self):
+    dlg = ChooseSessionDialog(self)
+    self.wait_window(dlg)
+
+    if not dlg.result:
+        return
+
+    self._selected_session_id = dlg.result["id"]
+    self._last_session_id = None  # force _tick to treat this as a new session
+    self._tick()
+
+def _leave_session(self):
+    if not messagebox.askyesno(
+            "Leave Session",
+            f"Leave session '{self.active_session['name']}'?"):
+        return
+
+    self._selected_session_id = None
+    self.active_session       = None
+    self._last_session_id     = None
+
+    self._dot.configure(text_color=C_MUTED)
+    self._session_lbl.configure(text="No active session", text_color=C_MUTED)
+    self._cutoff_lbl.configure(text="")
+    self._end_btn.grid_remove()
+    self._start_btn.grid()
+    self._count_lbl.configure(text="Choose a session")
+    self._info_strip.grid_remove()
+    for w in self._pills_frame.winfo_children():
+        w.destroy()
+    self._pill_widgets.clear()
+    self._summary_widgets.clear()
+    self._last_render_state = None
+    self._set_mode("in")
+
 
 def _fetch_group_counts():
     """Return {(program, yearlevel): count} from DB."""
@@ -67,23 +102,19 @@ def _fetch_group_counts():
         db.close()
 
 
-def get_active_session():
+def get_session_by_id(session_id: int):
     """
-    Returns the currently active session as a dict,
-    or None if no active session exists.
-
+    Returns a session as a dict by ID, or None if not found.
     Shape matches ScanScreen.active_session.
     """
     db = SessionLocal()
     try:
-        # ── Get active session with periods ─────────────────────────────
         ev = (
             db.query(EventSession)
             .options(joinedload(EventSession.periods))
-            .filter(EventSession.is_active == 1)
+            .filter(EventSession.id == session_id)
             .first()
         )
-
         if not ev:
             return None
 

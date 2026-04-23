@@ -53,13 +53,23 @@ def parse_card_data(raw: str, uid: str) -> CardData | None:
 def bytes_to_string(data: list[int]) -> str:
     return bytes(data).decode("ascii", errors="ignore").rstrip("\x00")
 
+_last_reader_state = None  # module-level state
+
 def get_reader():
+    global _last_reader_state
+
     available = readers()
-    if not available:
-        logger.warning("No PC/SC readers found.")
-        return None
-    logger.info(f"Using reader: {available[0]}")
-    return available[0]
+    has_reader = bool(available)
+
+    if has_reader != _last_reader_state:
+        if not has_reader:
+            logger.warning("No PC/SC readers found.")
+        else:
+            logger.info(f"Using reader: {available[0]}")
+
+        _last_reader_state = has_reader
+
+    return available[0] if has_reader else None
 
 def read_card(reader) -> tuple[str | None, str | None]:
     connection = reader.createConnection()
