@@ -29,6 +29,8 @@ from ui.students_screen import StudentsScreen
 from ui.components.nav_button import NavButton
 from ui.admin_screen import AdminScreen
 from database       import test_connection, create_tables
+from ui.login_screen import LoginScreen
+from db.auth_db import seed_superadmin
 
 ctk.set_appearance_mode("dark")
 
@@ -43,31 +45,75 @@ class App(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("Attendance Tracker")
-        self.geometry("1060x680")
+        self.geometry("1020x680")
         self.minsize(900, 600)
         self.configure(fg_color=C_BG)
 
-        self._nav_buttons   : dict[str, NavButton] = {}
-        self._screens       : dict[str, ctk.CTkFrame] = {}
-        self._active_screen : str = ""
+        self._mode = None
+        self._user = None
+        self._nav_buttons   = {}
+        self._screens       = {}
+        self._active_screen = ""
 
-        self._build_layout()
-        self._build_sidebar()
-        self._build_screens()
-        self._navigate("Scan")
-        self._tick_clock()
+        self._show_login()
 
+    def _show_login(self):
+        self._login_screen = LoginScreen(self, on_success=self._on_login)
+        self._login_screen.pack(fill="both", expand=True)
+
+    def _on_login(self, mode: str, user: dict):
+        self._mode = mode
+        self._user = user
+        self._login_screen.destroy()
+
+        if mode == "scan_only":
+            self._build_scan_only()
+        else:
+            self._build_layout()
+            self._build_sidebar()
+            self._build_screens()
+            self._navigate("Scan")
+            self._tick_clock()
     # ------------------------------------------------------------------
     # Layout
     # ------------------------------------------------------------------
 
+    def _build_scan_only(self):
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=0)
+
+        scan = ScanScreen(self, on_exit=self._logout)
+        scan.grid(row=0, column=0, sticky="nsew")
+        self._screens["Scan"] = scan
+
+        # ── Bottom status bar ────────────────────────────────────────────
+        bar = ctk.CTkFrame(self, fg_color=C_SURFACE, corner_radius=0, height=36)
+        bar.grid(row=1, column=0, sticky="ew")
+        bar.grid_propagate(False)
+        bar.grid_columnconfigure(1, weight=1)
+
+        self._db_lbl = ctk.CTkLabel(
+            bar, text="● Connecting...",
+            font=ctk.CTkFont(size=11), text_color=C_MUTED)
+        self._db_lbl.grid(row=0, column=0, padx=20, pady=8)
+
+        self._clock_lbl = ctk.CTkLabel(
+            bar, text="",
+            font=ctk.CTkFont(size=11), text_color=C_MUTED)
+        self._clock_lbl.grid(row=0, column=2, padx=20, pady=8)
+
+        self.after(200, self._check_db)
+        self._tick_clock()
+
     def _build_layout(self):
+        self.grid_columnconfigure(0, weight=0, minsize=180)  # was just weight=1 on col 1
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
     def _build_sidebar(self):
         self._sb = ctk.CTkFrame(self, fg_color=C_SURFACE,
-                                 corner_radius=0, width=220)
+                                 corner_radius=0, width=180)
         self._sb.grid(row=0, column=0, sticky="nsew")
         self._sb.grid_propagate(False)
         self._sb.grid_rowconfigure(10, weight=1)  # pushes clock to bottom
@@ -76,11 +122,11 @@ class App(ctk.CTk):
         ctk.CTkLabel(self._sb, text="ATTEND",
                      font=ctk.CTkFont(size=20, weight="bold"),
                      text_color=C_TEXT).grid(
-            row=0, column=0, sticky="w", padx=20, pady=(26, 0))
+            row=0, column=0, sticky="w", padx=14, pady=(26, 0))
         ctk.CTkLabel(self._sb, text="RFID TRACKER",
                      font=ctk.CTkFont(size=10),
                      text_color=C_MUTED).grid(
-            row=1, column=0, sticky="w", padx=20, pady=(0, 16))
+            row=1, column=0, sticky="w", padx=14, pady=(0, 16))
 
         ctk.CTkFrame(self._sb, height=1,
                      fg_color=C_BORDER).grid(
@@ -100,6 +146,14 @@ class App(ctk.CTk):
             )
             btn.grid(row=3 + i, column=0, sticky="ew")
             self._nav_buttons[name] = btn
+        
+        ctk.CTkButton(
+            self._sb, text="  ⬡  Logout",
+            fg_color="transparent", hover_color=C_SURFACE,
+            text_color=C_MUTED, anchor="w",
+            font=ctk.CTkFont(size=13),
+            command=self._logout,
+        ).grid(row=8, column=0, sticky="ew")
 
         # Divider before bottom
         ctk.CTkFrame(self._sb, height=1,
@@ -110,7 +164,7 @@ class App(ctk.CTk):
         self._db_lbl = ctk.CTkLabel(
             self._sb, text="● Connecting...",
             font=ctk.CTkFont(size=11), text_color=C_MUTED)
-        self._db_lbl.grid(row=11, column=0, sticky="w", padx=20, pady=(10, 0))
+        self._db_lbl.grid(row=11, column=0, sticky="w", padx=14, pady=(10, 0))
 
         # Clock
         self._clock_lbl = ctk.CTkLabel(
@@ -118,7 +172,7 @@ class App(ctk.CTk):
             font=ctk.CTkFont(size=11),
             text_color=C_MUTED, justify="left")
         self._clock_lbl.grid(
-            row=12, column=0, sticky="w", padx=20, pady=(6, 20))
+            row=12, column=0, sticky="w", padx=14, pady=(6, 20))
 
         # Check DB after UI loads
         self.after(200, self._check_db)
@@ -149,6 +203,33 @@ class App(ctk.CTk):
     # ------------------------------------------------------------------
     # Navigation
     # ------------------------------------------------------------------
+    
+    def _logout(self):
+        # Stop RFID and clock first
+        if "Scan" in self._screens:
+            self._screens["Scan"].stop_rfid()
+        
+        if hasattr(self, "_clock_after_id"):
+            try:
+                self.after_cancel(self._clock_after_id)
+            except Exception:
+                pass
+
+        # Tear down everything
+        for widget in self.winfo_children():
+            widget.destroy()
+
+        self.grid_columnconfigure(0, weight=1, minsize=0)
+        self.grid_columnconfigure(1, weight=0, minsize=0)
+
+        self._screens       = {}
+        self._nav_buttons   = {}
+        self._active_screen = ""
+        self._mode          = None
+        self._user          = None
+
+        # Back to login
+        self._show_login()
 
     def _navigate(self, name: str):
         if name == self._active_screen:
@@ -224,6 +305,8 @@ class App(ctk.CTk):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    seed_superadmin()  # ensure superadmin exists
+
     app = App()
     app.protocol("WM_DELETE_WINDOW", app.on_close)
-    app.mainloop() 
+    app.mainloop()

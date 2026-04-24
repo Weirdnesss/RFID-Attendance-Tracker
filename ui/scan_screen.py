@@ -48,9 +48,9 @@ class ScanScreen(ctk.CTkFrame):
     The RFID listener is owned here and must be stopped on app close
     via stop_rfid().
     """
-
-    def __init__(self, parent, **kwargs):
-        super().__init__(parent, fg_color=C_BG, corner_radius=0, **kwargs)
+    def __init__(self, parent, on_exit=None):
+        super().__init__(parent, fg_color=C_BG, corner_radius=0)
+        self._on_exit = on_exit 
         self.active_session     = None
         self._log_entries       = []
         self._listener          = None
@@ -179,6 +179,15 @@ class ScanScreen(ctk.CTkFrame):
             font=ctk.CTkFont(size=11),
             command=self._dev_scan,
         ).grid(row=0, column=7, padx=(2, 16))
+
+        if self._on_exit:
+            ctk.CTkButton(
+                sbar, text="⬡  Exit", width=80, height=28,
+                fg_color="transparent", border_color=C_BORDER, border_width=1,
+                text_color=C_MUTED, hover_color=C_SURFACE,
+                font=ctk.CTkFont(size=11),
+                command=self._on_exit,
+            ).grid(row=0, column=8, padx=(2, 16))
 
         # ── Info strip (hidden until session starts) ─────────────────────────
         self._info_strip = ctk.CTkFrame(self, fg_color="#12141b", corner_radius=0)

@@ -26,6 +26,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from dotenv import load_dotenv
 import os
 load_dotenv()
+import bcrypt
 
 DATABASE_URL = (
     f"mysql+pymysql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
@@ -41,6 +42,17 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 Base = declarative_base()
 
+class User(Base):
+    __tablename__ = "users"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    username      = Column(String(100), nullable=False, unique=True)
+    password_hash = Column(String(255), nullable=False)
+    role          = Column(Enum("superadmin", "admin"), nullable=False)
+    created_at    = Column(DateTime, default=datetime.now)
+
+    def __repr__(self):
+        return f"<User {self.id} — {self.username} ({self.role})>"
 
 # ---------------------------------------------------------------------------
 # Academic structure
@@ -335,7 +347,8 @@ def create_tables():
     Session.__table__.create(bind=engine, checkfirst=True)
     SessionPeriod.__table__.create(bind=engine, checkfirst=True)
     Attendance.__table__.create(bind=engine, checkfirst=True)
-    print("Tables ready: academic_periods, sessions, session_periods, attendance")
+    User.__table__.create(bind=engine, checkfirst=True)
+    print("Tables ready: academic_periods, sessions, session_periods, attendance, users")
 
 
 def test_connection():
