@@ -10,7 +10,6 @@ Tables:
     departments       — college/department records
     programs          — degree programs, linked to a department
     students          — normalised student records (linked to program)
-    studentssss       — denormalised student view (department/program as text)
     sessions          — session header (name, date, academic period)
     session_periods   — per-period tracking rules
     attendance        — scan records, linked to a period
@@ -341,7 +340,7 @@ def create_tables():
     """
     Create new tables if they don't exist.
     Reference/lookup tables (academic_years, academic_terms, departments,
-    programs, students, studentssss) are never touched.
+    programs, students) are never touched.
     """
     AcademicPeriod.__table__.create(bind=engine, checkfirst=True)
     Session.__table__.create(bind=engine, checkfirst=True)
