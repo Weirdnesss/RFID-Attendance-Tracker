@@ -10,7 +10,6 @@ Tables:
     departments       — college/department records
     programs          — degree programs, linked to a department
     students          — normalised student records (linked to program)
-    studentssss       — denormalised student view (department/program as text)
     sessions          — session header (name, date, academic period)
     session_periods   — per-period tracking rules
     attendance        — scan records, linked to a period
@@ -26,6 +25,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from dotenv import load_dotenv
 import os
 load_dotenv()
+import bcrypt
 
 DATABASE_URL = (
     f"mysql+pymysql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
@@ -41,6 +41,17 @@ engine = create_engine(
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 Base = declarative_base()
 
+class User(Base):
+    __tablename__ = "users"
+
+    id            = Column(Integer, primary_key=True, autoincrement=True)
+    username      = Column(String(100), nullable=False, unique=True)
+    password_hash = Column(String(255), nullable=False)
+    role          = Column(Enum("superadmin", "admin"), nullable=False)
+    created_at    = Column(DateTime, default=datetime.now)
+
+    def __repr__(self):
+        return f"<User {self.id} — {self.username} ({self.role})>"
 
 # ---------------------------------------------------------------------------
 # Academic structure
@@ -167,11 +178,12 @@ class Session(Base):
     date                = Column(Date, nullable=False, default=date.today)
     estimated_attendees = Column(Integer, nullable=True)
     created_at          = Column(DateTime, default=datetime.now)
+    ended_at            = Column(DateTime, nullable=True, default=None)
     academic_period_id  = Column(Integer,
                                  ForeignKey("academic_periods.id"),
                                  nullable=True)
     is_active   = Column(Integer, default=0)
-    active_flag = Column(Integer, default=None, unique=True)  # NULL = inactive, 1 = active (unique enforces one active session)
+    active_flag = Column(Integer, default=None)  # NULL = inactive, 1 = active (unique enforces one active session)
 
     academic_period    = relationship("AcademicPeriod", back_populates="sessions")
     periods            = relationship(
@@ -181,6 +193,7 @@ class Session(Base):
         cascade="all, delete-orphan",
     )
     attendance_records = relationship("Attendance", back_populates="session")
+    ended_at    = Column(DateTime, nullable=True, default=None)
 
     def __repr__(self):
         return f"<Session {self.id} — {self.name} ({self.date})>"
@@ -327,13 +340,14 @@ def create_tables():
     """
     Create new tables if they don't exist.
     Reference/lookup tables (academic_years, academic_terms, departments,
-    programs, students, studentssss) are never touched.
+    programs, students) are never touched.
     """
     AcademicPeriod.__table__.create(bind=engine, checkfirst=True)
     Session.__table__.create(bind=engine, checkfirst=True)
     SessionPeriod.__table__.create(bind=engine, checkfirst=True)
     Attendance.__table__.create(bind=engine, checkfirst=True)
-    print("Tables ready: academic_periods, sessions, session_periods, attendance")
+    User.__table__.create(bind=engine, checkfirst=True)
+    print("Tables ready: academic_periods, sessions, session_periods, attendance, users")
 
 
 def test_connection():

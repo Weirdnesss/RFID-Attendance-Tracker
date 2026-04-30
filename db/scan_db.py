@@ -36,7 +36,6 @@ def start_session(name, date, estimated_attendees, periods, academic_period_id, 
     finally:
         db.close()
 
-
 def end_session(session_id):
     db = SessionLocal()
     try:
@@ -49,6 +48,7 @@ def end_session(session_id):
         return False
     finally:
         db.close()
+
 
 def _fetch_group_counts():
     """Return {(program, yearlevel): count} from DB."""
@@ -67,23 +67,19 @@ def _fetch_group_counts():
         db.close()
 
 
-def get_active_session():
+def get_session_by_id(session_id: int):
     """
-    Returns the currently active session as a dict,
-    or None if no active session exists.
-
+    Returns a session as a dict by ID, or None if not found.
     Shape matches ScanScreen.active_session.
     """
     db = SessionLocal()
     try:
-        # ── Get active session with periods ─────────────────────────────
         ev = (
             db.query(EventSession)
             .options(joinedload(EventSession.periods))
-            .filter(EventSession.is_active == 1)
+            .filter(EventSession.id == session_id)
             .first()
         )
-
         if not ev:
             return None
 
