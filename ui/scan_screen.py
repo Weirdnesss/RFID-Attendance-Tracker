@@ -2,6 +2,7 @@
 scan_screen.py
 --------------
 Scan screen as a reusable CTkFrame.
+
 Embedded by main.py — no longer a standalone root window.
 
 Requires:
@@ -11,8 +12,9 @@ Requires:
 import tkinter as tk
 from tkinter import messagebox
 import customtkinter as ctk
-from datetime import datetime, time as dtime
+from datetime import datetime, timedelta, time as dtime
 import os
+
 from db.scan_db import get_session_by_id
 
 terminal_id = os.getenv("TERMINAL_ID", "UNKNOWN")
@@ -21,12 +23,10 @@ from ui.components.scan_area import ScanArea
 from ui.components.log_entry import LogEntry
 from ui.dialogs.new_session import NewSessionDialog, ConfirmSessionDialog, StudentGroupSelectorDialog, ChooseSessionDialog
 from db.scan_db import _fetch_group_counts
-
 from sqlalchemy import func
-
 from database import (AcademicPeriod, SessionLocal, Student, Attendance,
-                      Session as EventSession, SessionPeriod)
-
+                      Session as EventSession, SessionPeriod,
+                      Staff, StaffAttendance)
 from hardware.rfid_listener import RFIDListener
 from hardware.rfid_reader import CardData
 from ui.components.clock_picker import TimeEntry
@@ -48,21 +48,22 @@ class ScanScreen(ctk.CTkFrame):
     The RFID listener is owned here and must be stopped on app close
     via stop_rfid().
     """
+
     def __init__(self, parent, on_exit=None):
         super().__init__(parent, fg_color=C_BG, corner_radius=0)
-        self._on_exit = on_exit 
-        self.active_session     = None
-        self._log_entries       = []
-        self._listener          = None
-        self._scan_mode         = "in"   # "in" or "out"
-        self._after_ids         = []
-        self._selected_session_id   = None
-        self._last_session_id     = None
+        self._on_exit = on_exit
+        self.active_session = None
+        self._log_entries = []
+        self._listener = None
+        self._scan_mode = "in"  # "in" or "out"
+        self._after_ids = []
+        self._selected_session_id = None
+        self._last_session_id = None
         self._last_render_state = None
-        self._pill_widgets      = {}   # {period_id: {frame, scanned, late, timed_out, ...}}
-        self._summary_widgets   = {}   # holds the rightmost summary pill widgets
+        self._pill_widgets = {}     # {period_id: {frame, scanned, late, timed_out, ...}}
+        self._summary_widgets = {}  # holds the rightmost summary pill widgets
         self._build_ui()
-        self._safe_after(500,  self._start_rfid)
+        self._safe_after(500, self._start_rfid)
         self._safe_after(1000, self._tick)
 
     # ------------------------------------------------------------------
@@ -106,7 +107,7 @@ class ScanScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _build_ui(self):
-        # rows: 0=sbar  1=info strip  2=scan area  3=log  4=rbar
+        # rows: 0=sbar 1=info strip 2=scan area 3=log 4=rbar
         self.grid_rowconfigure(3, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
@@ -166,7 +167,7 @@ class ScanScreen(ctk.CTkFrame):
         self._dev_id_var = tk.StringVar()
         self._dev_entry = ctk.CTkEntry(
             sbar, textvariable=self._dev_id_var,
-            placeholder_text="Student ID",
+            placeholder_text="ID",
             fg_color=C_BG, border_color=C_BORDER,
             text_color=C_TEXT, height=28, width=100)
         self._dev_entry.grid(row=0, column=6, padx=(8, 2))
@@ -182,7 +183,7 @@ class ScanScreen(ctk.CTkFrame):
 
         if self._on_exit:
             ctk.CTkButton(
-                sbar, text="⬡  Exit", width=80, height=28,
+                sbar, text="⬡ Exit", width=80, height=28,
                 fg_color="transparent", border_color=C_BORDER, border_width=1,
                 text_color=C_MUTED, hover_color=C_SURFACE,
                 font=ctk.CTkFont(size=11),
@@ -255,7 +256,6 @@ class ScanScreen(ctk.CTkFrame):
         changes (new session or different session), NOT on every tick."""
         for w in self._pills_frame.winfo_children():
             w.destroy()
-
         self._pill_widgets.clear()
         self._summary_widgets.clear()
 
@@ -263,8 +263,9 @@ class ScanScreen(ctk.CTkFrame):
         periods = self.active_session.get("periods", [])
 
         for i, p in enumerate(periods):
-            pid    = p["id"]
-            color  = _PERIOD_COLORS[i % len(_PERIOD_COLORS)]
+            pid = p["id"]
+            color = _PERIOD_COLORS[i % len(_PERIOD_COLORS)]
+
             t_in_s = p.get("time_in_start")
             t_in_e = p.get("time_in_end")
             active = t_in_s and t_in_e and t_in_s <= now <= t_in_e
@@ -302,14 +303,16 @@ class ScanScreen(ctk.CTkFrame):
                     f"In {t_in_s.strftime('%I:%M %p').lstrip('0')}"
                     f"–{t_in_e.strftime('%I:%M %p').lstrip('0')}",
                     "#0b1220", "#38bdf8"))
+
             if p.get("late_enabled") and p.get("late_start"):
-                ls    = p["late_start"]
+                ls = p["late_start"]
                 grace = p.get("grace_minutes", 0)
                 tags.append((
                     f"Late {ls.strftime('%I:%M %p').lstrip('0')}",
                     "#1f1708", "#f0a843"))
                 if grace:
                     tags.append((f"+{grace}m", "#16181f", C_MUTED))
+
             if (p.get("timeout_enabled")
                     and p.get("timeout_start") and p.get("timeout_end")):
                 ts = p["timeout_start"]
@@ -362,17 +365,17 @@ class ScanScreen(ctk.CTkFrame):
                     side="left", padx=(0, 8))
 
             self._pill_widgets[pid] = {
-                "frame":      pill,
+                "frame": pill,
                 "active_dot": active_dot,
-                "name_row":   name_row,
-                "scanned":    scanned_lbl,
-                "late":       late_lbl,
-                "timed_out":  timed_out_lbl,
+                "name_row": name_row,
+                "scanned": scanned_lbl,
+                "late": late_lbl,
+                "timed_out": timed_out_lbl,
             }
 
         # ── Summary pill (rightmost) ─────────────────────────────────────────
         n_total = self.active_session.get("count", 0)
-        est     = self.active_session.get("estimated_attendees")
+        est = self.active_session.get("estimated_attendees")
 
         summary = ctk.CTkFrame(
             self._pills_frame,
@@ -386,9 +389,6 @@ class ScanScreen(ctk.CTkFrame):
             summary, text=count_text,
             font=ctk.CTkFont(size=13, weight="bold"), text_color=C_TEXT)
         count_lbl.pack(padx=12, pady=(8, 0))
-        ctk.CTkLabel(summary, text="total scans",
-                     font=ctk.CTkFont(size=9), text_color=C_MUTED).pack(
-            padx=12, pady=(0, 4))
 
         pct_lbl = bar_fill = None
         if est and est > 0:
@@ -408,11 +408,11 @@ class ScanScreen(ctk.CTkFrame):
             bar_fill.place(x=0, y=0)
 
         self._summary_widgets = {
-            "frame":     summary,
+            "frame": summary,
             "count_lbl": count_lbl,
-            "pct_lbl":   pct_lbl,
-            "bar_fill":  bar_fill,
-            "est":       est,
+            "pct_lbl": pct_lbl,
+            "bar_fill": bar_fill,
+            "est": est,
         }
 
     def _update_pills(self):
@@ -424,14 +424,14 @@ class ScanScreen(ctk.CTkFrame):
         now = datetime.now().time()
 
         for i, p in enumerate(self.active_session.get("periods", [])):
-            pid     = p["id"]
+            pid = p["id"]
             widgets = self._pill_widgets.get(pid)
             if not widgets:
                 continue
 
-            stats     = self.active_session.get("period_stats", {}).get(pid, {})
-            scanned   = stats.get("scanned",   0)
-            late      = stats.get("late",      0)
+            stats = self.active_session.get("period_stats", {}).get(pid, {})
+            scanned = stats.get("scanned", 0)
+            late = stats.get("late", 0)
             timed_out = stats.get("timed_out", 0)
 
             widgets["scanned"].configure(text=str(scanned))
@@ -444,7 +444,7 @@ class ScanScreen(ctk.CTkFrame):
             t_in_s = p.get("time_in_start")
             t_in_e = p.get("time_in_end")
             active = t_in_s and t_in_e and t_in_s <= now <= t_in_e
-            color  = _PERIOD_COLORS[i % len(_PERIOD_COLORS)]
+            color = _PERIOD_COLORS[i % len(_PERIOD_COLORS)]
 
             widgets["frame"].configure(
                 fg_color="#0d1f18" if active else "#1a1d27",
@@ -459,38 +459,6 @@ class ScanScreen(ctk.CTkFrame):
             else:
                 dot.pack_forget()
 
-        self._update_summary_pill()
-
-    def _update_summary_pill(self):
-        """Update the summary pill count/pct/bar in-place."""
-        sw = self._summary_widgets
-        if not sw or not self.active_session:
-            return
-
-        n_total = self.active_session.get("count", 0)
-        est     = sw.get("est")
-
-        count_text = f"{n_total} / {est}" if est else str(n_total)
-        sw["count_lbl"].configure(text=count_text)
-
-        if est and est > 0 and sw.get("pct_lbl") and sw.get("bar_fill"):
-            pct    = min(round(n_total / est * 100), 100)
-            fill_w = max(2, round(80 * n_total / est))
-            sw["pct_lbl"].configure(text=f"{pct}%")
-            sw["bar_fill"].configure(width=fill_w)
-
-    # def _update_session_summary(self):
-    #     """Update the bottom-bar count label."""
-    #     if not self.active_session:
-    #         return
-    #     n_total = self.active_session.get("count", 0)
-    #     est     = self.active_session.get("estimated_attendees")
-    #     if est:
-    #         pct = min(round(n_total / est * 100), 100)
-    #         self._count_lbl.configure(text=f"{n_total}/{est} expected scans ({pct}%)")
-    #     else:
-    #         self._count_lbl.configure(text=f"Total scans this session: {n_total}")
-
     # ------------------------------------------------------------------
     # Tick — poll DB every 5 s, update UI only when state changed
     # ------------------------------------------------------------------
@@ -502,47 +470,44 @@ class ScanScreen(ctk.CTkFrame):
         if self._selected_session_id is None:
             self._safe_after(5000, self._tick)
             return
+
         db_session = get_session_by_id(self._selected_session_id)
         current_id = self._last_session_id
-        new_id     = db_session["id"] if db_session else None
+        new_id = db_session["id"] if db_session else None
 
         # ── Case 1: Same session ─────────────────────────────────────────────
         if current_id == new_id:
             if db_session:
                 new_state = self._get_render_state(db_session)
                 if new_state != self._last_render_state:
-                        self.active_session     = db_session
-                        self._last_render_state = new_state
-                        self._build_pills()   # was _update_pills()
-                        self._update_pills()
+                    self.active_session = db_session
+                    self._last_render_state = new_state
+                    self._build_pills()
+                    self._update_pills()
 
         # ── Case 2: New session started ──────────────────────────────────────
         elif current_id is None and new_id is not None:
-            self.active_session   = db_session
+            self.active_session = db_session
             self._last_session_id = new_id
-
             self._dot.configure(text_color=C_SUCCESS)
             self._session_lbl.configure(text=db_session["name"], text_color=C_ACCENT)
             self._start_btn.grid_remove()
             self._end_btn.grid()
             self._info_strip.grid()
-
             self._build_pills()
             self._update_pills()
             self._last_render_state = self._get_render_state(db_session)
 
         # ── Case 3: Session ended ────────────────────────────────────────────
         elif current_id is not None and new_id is None:
-            self.active_session   = None
+            self.active_session = None
             self._last_session_id = None
-
             self._dot.configure(text_color=C_MUTED)
             self._session_lbl.configure(text="No active session", text_color=C_MUTED)
             self._end_btn.grid_remove()
             self._start_btn.grid()
             self._count_lbl.configure(text="Start a Session")
             self._info_strip.grid_remove()
-
             for w in self._pills_frame.winfo_children():
                 w.destroy()
             self._pill_widgets.clear()
@@ -552,15 +517,13 @@ class ScanScreen(ctk.CTkFrame):
 
         # ── Case 4: Different session (rare) ─────────────────────────────────
         elif current_id != new_id:
-            self.active_session   = db_session
+            self.active_session = db_session
             self._last_session_id = new_id
-
             self._dot.configure(text_color=C_SUCCESS)
             self._session_lbl.configure(text=db_session["name"], text_color=C_ACCENT)
             self._info_strip.grid()
             self._start_btn.grid_remove()
             self._end_btn.grid()
-
             self._build_pills()
             self._update_pills()
             self._last_render_state = self._get_render_state(db_session)
@@ -601,47 +564,11 @@ class ScanScreen(ctk.CTkFrame):
     # Session
     # ------------------------------------------------------------------
 
-    # def _start_session(self):
-    #     dlg = NewSessionDialog(self)
-    #     self.wait_window(dlg)
-
-    #     if not dlg.result or not dlg.result.get("started"):
-    #         return
-
-    #     # Force immediate refresh instead of waiting 5 s
-    #     self._last_session_id = None
-    #     self._tick()
-
-    # def _end_session(self):
-    #     if not messagebox.askyesno(
-    #             "End Session",
-    #             f"End session '{self.active_session['name']}'?"):
-    #         return
-    #     db = SessionLocal()
-    #     try:
-    #         db.query(EventSession).filter(
-    #             EventSession.is_active == 1
-    #         ).update({"is_active": 0, "active_flag": None})
-    #         db.commit()
-    #     finally:
-    #         db.close()
-
-    #     self._dot.configure(text_color=C_MUTED)
-    #     self._session_lbl.configure(text="No active session", text_color=C_MUTED)
-    #     self._cutoff_lbl.configure(text="")
-    #     self._end_btn.grid_remove()
-    #     self._start_btn.grid()
-    #     self._count_lbl.configure(text="Start a Session")
-    #     self._set_mode("in")
-    #     # _tick will handle hiding the strip and clearing pills on next poll
-
     def _choose_session(self):
         dlg = ChooseSessionDialog(self)
         self.wait_window(dlg)
-
         if not dlg.result:
             return
-
         self._selected_session_id = dlg.result["id"]
         self._last_session_id = None  # force _tick to treat this as a new session
         self._tick()
@@ -653,9 +580,8 @@ class ScanScreen(ctk.CTkFrame):
             return
 
         self._selected_session_id = None
-        self.active_session       = None
-        self._last_session_id     = None
-
+        self.active_session = None
+        self._last_session_id = None
         self._dot.configure(text_color=C_MUTED)
         self._session_lbl.configure(text="No active session", text_color=C_MUTED)
         self._cutoff_lbl.configure(text="")
@@ -696,9 +622,8 @@ class ScanScreen(ctk.CTkFrame):
         self._process_with_db(card)
 
     def _get_active_period(self, mode: str | None = None) -> dict | None:
-        now  = datetime.now().time()
+        now = datetime.now().time()
         mode = mode or self._scan_mode
-
         for p in self.active_session.get("periods", []):
             if mode == "out":
                 t_out_s = p.get("timeout_start")
@@ -713,20 +638,45 @@ class ScanScreen(ctk.CTkFrame):
         return None
 
     def _process_with_db(self, card: CardData):
+        """
+        Router: look up the scanned ID against students first,
+        then fall back to staff. Delegates scan logic to the
+        appropriate handler.
+        """
         db = SessionLocal()
         try:
+            # ── Try student first ─────────────────────────────────────────
             student = db.query(Student).filter(
                 Student.student_id == card.student_id).first()
 
-            if not student:
-                self._scan_area.show_error(f"Student ID {card.student_id} not found")
+            if student:
+                tag = student.program.code if student.program else "Student"
+                name = f"{student.first_name} {student.last_name}"
+                now = datetime.now()
+                period = self._get_active_period(self._scan_mode)
+                if period is None:
+                    if self._scan_mode == "out":
+                        self._scan_area.show_error("No active scan-out window right now")
+                    else:
+                        self._scan_area.show_error(
+                            "No active period right now — check session windows")
+                    return
+                self._process_student_scan(db, student, name, tag, now, period)
+                return
+
+            # ── Fall back to staff ────────────────────────────────────────
+            staff = db.query(Staff).filter(
+                Staff.staff_id == str(card.student_id)).first()
+
+            if not staff:
+                self._scan_area.show_error(f"ID {card.student_id} not found")
                 self._add_log("Unknown card", card.student_id, "error",
                               datetime.now().strftime("%I:%M:%S %p"))
                 return
 
-            name = f"{student.first_name} {student.last_name}"
-            now  = datetime.now()
-
+            tag = f"{staff.role or 'Staff'} · {staff.department or '—'}"
+            name = f"{staff.first_name} {staff.last_name}"
+            now = datetime.now()
             period = self._get_active_period(self._scan_mode)
             if period is None:
                 if self._scan_mode == "out":
@@ -735,100 +685,194 @@ class ScanScreen(ctk.CTkFrame):
                     self._scan_area.show_error(
                         "No active period right now — check session windows")
                 return
+            self._process_staff_scan(db, staff, name, tag, now, period)
 
-            existing = db.query(Attendance).filter(
-                Attendance.student_id == card.student_id,
-                Attendance.session_id == self.active_session["id"],
-                Attendance.period_id  == period["id"],
-            ).first()
+        finally:
+            db.close()
 
-            # ── SCAN OUT ─────────────────────────────────────────────────────
-            if self._scan_mode == "out":
-                if not period["timeout_enabled"]:
-                    self._scan_area.show_error(
-                        f"Time-out tracking is off for '{period['name']}'")
-                    return
+    def _process_student_scan(self, db, student, name, tag, now, period):
+        """Handles scan-in and scan-out logic for students."""
+        existing = db.query(Attendance).filter(
+            Attendance.student_id == student.student_id,
+            Attendance.session_id == self.active_session["id"],
+            Attendance.period_id == period["id"],
+        ).first()
 
-                if period["timeout_start"] and period["timeout_end"]:
-                    now_t = now.time()
-                    if not (period["timeout_start"] <= now_t <= period["timeout_end"]):
-                        ts = period["timeout_start"].strftime("%I:%M %p").lstrip("0")
-                        te = period["timeout_end"].strftime("%I:%M %p").lstrip("0")
-                        self._scan_area.show_error(f"Scan-out window is {ts} – {te}")
-                        return
-
-                if not existing:
-                    self._scan_area.show_not_checked_in(name)
-                    return
-                if existing.time_out:
-                    self._scan_area.show_already_out(
-                        name, existing.time_out.strftime("%I:%M %p"))
-                    return
-
-                existing.time_out     = now
-                existing.terminal_id  = terminal_id
-                db.commit()
-
-                ps  = self.active_session.setdefault("period_stats", {})
-                pid = period["id"]
-                ps.setdefault(pid, {"scanned": 0, "late": 0, "timed_out": 0})
-                ps[pid]["timed_out"] += 1
-
-                time_in_str = (existing.time_in.strftime("%I:%M %p")
-                               if existing.time_in else "—")
-                self._scan_area.show_timeout(name, student.student_id, time_in_str)
-                self._add_log(name, student.student_id, "timeout",
-                              now.strftime("%I:%M:%S %p"))
-                self.active_session["count"] += 1
-                self._update_pills()
+        # ── SCAN OUT ──────────────────────────────────────────────────────
+        if self._scan_mode == "out":
+            if not period["timeout_enabled"]:
+                self._scan_area.show_error(
+                    f"Time-out tracking is off for '{period['name']}'")
                 return
 
-            # ── SCAN IN ──────────────────────────────────────────────────────
-            if existing:
-                self._scan_area.show_warning(
-                    f"{student.first_name} already marked for "
-                    f"'{period['name']}' at "
-                    f"{existing.time_in.strftime('%I:%M %p')}")
+            if period["timeout_start"] and period["timeout_end"]:
+                now_t = now.time()
+                if not (period["timeout_start"] <= now_t <= period["timeout_end"]):
+                    ts = period["timeout_start"].strftime("%I:%M %p").lstrip("0")
+                    te = period["timeout_end"].strftime("%I:%M %p").lstrip("0")
+                    self._scan_area.show_error(f"Scan-out window is {ts} – {te}")
+                    return
+
+            if not existing:
+                self._scan_area.show_not_checked_in(name)
+                return
+            if existing.time_out:
+                self._scan_area.show_already_out(
+                    name, existing.time_out.strftime("%I:%M %p"))
                 return
 
-            from datetime import timedelta
-            if period["late_enabled"] and period["late_start"]:
-                cutoff_dt = now.replace(
-                    hour=period["late_start"].hour,
-                    minute=period["late_start"].minute, second=0)
-                cutoff_dt += timedelta(minutes=period["grace_minutes"])
-                status = "late" if now > cutoff_dt else "present"
-            else:
-                status = "present"
-
-            ps  = self.active_session.setdefault("period_stats", {})
-            pid = period["id"]
-            ps.setdefault(pid, {"scanned": 0, "late": 0, "timed_out": 0})
-            ps[pid]["scanned"] += 1
-            if status == "late":
-                ps[pid]["late"] += 1
-
-            db.add(Attendance(
-                student_id=student.student_id,
-                session_id=self.active_session["id"],
-                period_id=period["id"],
-                status=status,
-                time_in=now,
-                terminal_id=terminal_id,
-            ))
+            existing.time_out = now
+            existing.terminal_id = terminal_id
             db.commit()
 
-            self._increment_breakdown(status)
-            self._scan_area.show_success(
-                name, student.student_id,
-                f"{student.program.code if student.program else '—'}  ·  {period['name']}",
-                status)
-            self._add_log(name, student.student_id, status,
+            ps = self.active_session.setdefault("period_stats", {})
+            pid = period["id"]
+            ps.setdefault(pid, {"scanned": 0, "late": 0, "timed_out": 0})
+            ps[pid]["timed_out"] += 1
+
+            time_in_str = (existing.time_in.strftime("%I:%M %p")
+                           if existing.time_in else "—")
+            self._scan_area.show_timeout(name, student.student_id, time_in_str)
+            self._add_log(name, student.student_id, "timeout",
                           now.strftime("%I:%M:%S %p"))
             self.active_session["count"] += 1
             self._update_pills()
-        finally:
-            db.close()
+            return
+
+        # ── SCAN IN ───────────────────────────────────────────────────────
+        if existing:
+            self._scan_area.show_warning(
+                f"{student.first_name} already marked for "
+                f"'{period['name']}' at "
+                f"{existing.time_in.strftime('%I:%M %p')}")
+            return
+
+        if period["late_enabled"] and period["late_start"]:
+            cutoff_dt = now.replace(
+                hour=period["late_start"].hour,
+                minute=period["late_start"].minute, second=0)
+            cutoff_dt += timedelta(minutes=period["grace_minutes"])
+            status = "late" if now > cutoff_dt else "present"
+        else:
+            status = "present"
+
+        ps = self.active_session.setdefault("period_stats", {})
+        pid = period["id"]
+        ps.setdefault(pid, {"scanned": 0, "late": 0, "timed_out": 0})
+        ps[pid]["scanned"] += 1
+        if status == "late":
+            ps[pid]["late"] += 1
+
+        db.add(Attendance(
+            student_id=student.student_id,
+            session_id=self.active_session["id"],
+            period_id=period["id"],
+            status=status,
+            time_in=now,
+            terminal_id=terminal_id,
+        ))
+        db.commit()
+
+        self._increment_breakdown(status)
+        self._scan_area.show_success(
+            name, student.student_id,
+            f"{tag} · {period['name']}",
+            status)
+        self._add_log(name, student.student_id, status,
+                      now.strftime("%I:%M:%S %p"))
+        self.active_session["count"] += 1
+        self._update_pills()
+
+    def _process_staff_scan(self, db, staff, name, tag, now, period):
+        """Handles scan-in and scan-out logic for staff."""
+        existing = db.query(StaffAttendance).filter(
+            StaffAttendance.staff_id == staff.staff_id,
+            StaffAttendance.session_id == self.active_session["id"],
+            StaffAttendance.period_id == period["id"],
+        ).first()
+
+        # ── SCAN OUT ──────────────────────────────────────────────────────
+        if self._scan_mode == "out":
+            if not period["timeout_enabled"]:
+                self._scan_area.show_error(
+                    f"Time-out tracking is off for '{period['name']}'")
+                return
+
+            if period["timeout_start"] and period["timeout_end"]:
+                now_t = now.time()
+                if not (period["timeout_start"] <= now_t <= period["timeout_end"]):
+                    ts = period["timeout_start"].strftime("%I:%M %p").lstrip("0")
+                    te = period["timeout_end"].strftime("%I:%M %p").lstrip("0")
+                    self._scan_area.show_error(f"Scan-out window is {ts} – {te}")
+                    return
+
+            if not existing:
+                self._scan_area.show_not_checked_in(name)
+                return
+            if existing.time_out:
+                self._scan_area.show_already_out(
+                    name, existing.time_out.strftime("%I:%M %p"))
+                return
+
+            existing.time_out = now
+            db.commit()
+
+            ps = self.active_session.setdefault("period_stats", {})
+            pid = period["id"]
+            ps.setdefault(pid, {"scanned": 0, "late": 0, "timed_out": 0})
+            ps[pid]["timed_out"] += 1
+
+            time_in_str = (existing.time_in.strftime("%I:%M %p")
+                           if existing.time_in else "—")
+            self._scan_area.show_timeout(name, staff.staff_id, time_in_str)
+            self._add_log(name, staff.staff_id, "timeout",
+                          now.strftime("%I:%M:%S %p"))
+            self.active_session["count"] += 1
+            self._update_pills()
+            return
+
+        # ── SCAN IN ───────────────────────────────────────────────────────
+        if existing:
+            self._scan_area.show_warning(
+                f"{name} already marked for "
+                f"'{period['name']}' at "
+                f"{existing.time_in.strftime('%I:%M %p')}")
+            return
+
+        if period["late_enabled"] and period["late_start"]:
+            cutoff_dt = now.replace(
+                hour=period["late_start"].hour,
+                minute=period["late_start"].minute, second=0)
+            cutoff_dt += timedelta(minutes=period["grace_minutes"])
+            status = "late" if now > cutoff_dt else "present"
+        else:
+            status = "present"
+
+        ps = self.active_session.setdefault("period_stats", {})
+        pid = period["id"]
+        ps.setdefault(pid, {"scanned": 0, "late": 0, "timed_out": 0})
+        ps[pid]["scanned"] += 1
+        if status == "late":
+            ps[pid]["late"] += 1
+
+        db.add(StaffAttendance(
+            staff_id=staff.staff_id,
+            session_id=self.active_session["id"],
+            period_id=period["id"],
+            status=status,
+            time_in=now,
+        ))
+        db.commit()
+
+        self._increment_breakdown(status)
+        self._scan_area.show_success(
+            name, staff.staff_id,
+            f"{tag} · {period['name']}",
+            status)
+        self._add_log(name, staff.staff_id, status,
+                      now.strftime("%I:%M:%S %p"))
+        self.active_session["count"] += 1
+        self._update_pills()
 
     def _on_error(self, _):
         self._scan_area.show_error("Card read error")
@@ -843,8 +887,8 @@ class ScanScreen(ctk.CTkFrame):
     # Log
     # ------------------------------------------------------------------
 
-    def _add_log(self, name, student_id, status, time_str):
-        entry = LogEntry(self._log_frame, name, student_id, status, time_str)
+    def _add_log(self, name, entity_id, status, time_str):
+        entry = LogEntry(self._log_frame, name, entity_id, status, time_str)
         entry.pack(fill="x", padx=20, pady=3)
         self._log_entries.append(entry)
         if len(self._log_entries) > 20:

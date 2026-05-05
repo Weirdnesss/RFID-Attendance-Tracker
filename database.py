@@ -18,7 +18,7 @@ Tables:
 from datetime import date, time, datetime, timedelta
 from sqlalchemy import (
     create_engine, Column, Integer, String, Boolean,
-    Date, Time, DateTime, Enum, ForeignKey, SmallInteger, text
+    Date, Time, DateTime, Enum, ForeignKey, SmallInteger, text, JSON
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 
@@ -103,7 +103,6 @@ class AcademicPeriod(Base):
     def __repr__(self):
         return f"<AcademicPeriod {self.id} active={self.is_active}>"
 
-
 # ---------------------------------------------------------------------------
 # Departments & Programs
 # ---------------------------------------------------------------------------
@@ -120,6 +119,13 @@ class Department(Base):
     def __repr__(self):
         return f"<Department {self.id} — {self.code}>"
 
+class Role(Base):
+    __tablename__ = "roles"
+
+    id   = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(100), nullable=False, unique=True)
+
+    staff = relationship("Staff", back_populates="role_ref")
 
 class Program(Base):
     __tablename__ = "programs"
@@ -134,7 +140,6 @@ class Program(Base):
 
     def __repr__(self):
         return f"<Program {self.id} — {self.code}>"
-
 
 # ---------------------------------------------------------------------------
 # Students
@@ -165,6 +170,33 @@ class Student(Base):
     def __repr__(self):
         return f"<Student {self.student_id} — {self.full_name}>"
 
+class Staff(Base):
+    __tablename__ = "staff"
+
+    staff_id    = Column(String(50), primary_key=True)
+    first_name  = Column(String(512), nullable=True)
+    last_name   = Column(String(512), nullable=True)
+    middle_name = Column(String(512), nullable=True)
+    department_id = Column(Integer, ForeignKey("departments.id"), nullable=True)  # ← was department string
+    role_id       = Column(Integer, ForeignKey("roles.id"),       nullable=True)  # ← was role string
+    is_active     = Column(Boolean, default=True)
+
+    department_ref = relationship("Department")
+    role_ref       = relationship("Role", back_populates="staff")
+    attendance_records = relationship("StaffAttendance", back_populates="staff")
+
+    @property
+    def full_name(self) -> str:
+        parts = [self.first_name, self.middle_name, self.last_name]
+        return " ".join(p for p in parts if p)
+
+    @property
+    def department(self) -> str:
+        return self.department_ref.name if self.department_ref else "—"
+
+    @property
+    def role(self) -> str:
+        return self.role_ref.name if self.role_ref else "—"
 
 # ---------------------------------------------------------------------------
 # Sessions — header only (name + date + academic period)
@@ -197,7 +229,6 @@ class Session(Base):
 
     def __repr__(self):
         return f"<Session {self.id} — {self.name} ({self.date})>"
-
 
 # ---------------------------------------------------------------------------
 # Session periods — per-period tracking rules
@@ -301,7 +332,6 @@ class SessionPeriod(Base):
         return (f"<SessionPeriod {self.id} — {self.name} "
                 f"[{self.time_in_start}–{self.time_in_end}]>")
 
-
 # ---------------------------------------------------------------------------
 # Attendance — one row per student per period
 # ---------------------------------------------------------------------------
@@ -319,6 +349,9 @@ class Attendance(Base):
         nullable=False,
         default="present",
     )
+    attendee_type  = Column(Enum("students", "staff", "both"), nullable=False, default="students")
+    student_filter = Column(JSON, nullable=True)  # e.g. {"programs": ["BSIT"], "yearlevels": ["1st Year"]}
+    staff_filter   = Column(JSON, nullable=True)  # e.g. {"departments": ["CCS"], "roles": ["Teacher"]}
     time_in  = Column(DateTime, nullable=True)
     time_out = Column(DateTime, nullable=True)
     terminal_id = Column(String(50), nullable=True)
@@ -331,6 +364,20 @@ class Attendance(Base):
         return (f"<Attendance student={self.student_id} "
                 f"period={self.period_id} status={self.status}>")
 
+class StaffAttendance(Base):
+    __tablename__ = "staff_attendance"
+
+    id         = Column(Integer, primary_key=True, autoincrement=True)
+    staff_id   = Column(String(50), ForeignKey("staff.staff_id"), nullable=False)
+    session_id = Column(Integer,    ForeignKey("sessions.id"),    nullable=False)
+    period_id  = Column(Integer,    ForeignKey("session_periods.id"), nullable=False)
+    status     = Column(Enum("present", "late", "absent"), nullable=False, default="present")
+    time_in    = Column(DateTime, nullable=True)
+    time_out   = Column(DateTime, nullable=True)
+
+    staff   = relationship("Staff",         back_populates="attendance_records")
+    session = relationship("Session")
+    period  = relationship("SessionPeriod")
 
 # ---------------------------------------------------------------------------
 # Table helpers
@@ -347,8 +394,10 @@ def create_tables():
     SessionPeriod.__table__.create(bind=engine, checkfirst=True)
     Attendance.__table__.create(bind=engine, checkfirst=True)
     User.__table__.create(bind=engine, checkfirst=True)
+    Role.__table__.create(bind=engine, checkfirst=True)
+    Staff.__table__.create(bind=engine, checkfirst=True)
+    StaffAttendance.__table__.create(bind=engine, checkfirst=True)
     print("Tables ready: academic_periods, sessions, session_periods, attendance, users")
-
 
 def test_connection():
     try:

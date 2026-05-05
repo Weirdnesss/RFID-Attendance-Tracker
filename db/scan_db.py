@@ -2,12 +2,14 @@ import os
 from sqlalchemy.orm import joinedload
 from sqlalchemy import func
 
-from database import SessionLocal, Session as EventSession, SessionPeriod, Attendance, Program, Student
+from database import SessionLocal, Session as EventSession, SessionPeriod, Attendance, Program, Student, StaffAttendance, Staff
 from db.students_db import YEAR_LEVEL_LABELS
 
 from sqlalchemy.exc import IntegrityError
 
-def start_session(name, date, estimated_attendees, periods, academic_period_id, terminal_id):
+def start_session(name, date, estimated_attendees, periods, academic_period_id,
+                  terminal_id, attendee_type="students",
+                  student_filter=None, staff_filter=None):
     db = SessionLocal()
     try:
         new_session = EventSession(
@@ -16,7 +18,10 @@ def start_session(name, date, estimated_attendees, periods, academic_period_id, 
             estimated_attendees=estimated_attendees,
             academic_period_id=academic_period_id,
             is_active=1,
-            active_flag=1,  # unique — will raise IntegrityError if one exists
+            active_flag=1,
+            attendee_type=attendee_type,       # ← new
+            student_filter=student_filter,     # ← new
+            staff_filter=staff_filter,         # ← new
         )
         db.add(new_session)
         db.flush()  # get the new session ID before adding periods
@@ -49,7 +54,6 @@ def end_session(session_id):
     finally:
         db.close()
 
-
 def _fetch_group_counts():
     """Return {(program, yearlevel): count} from DB."""
     db = SessionLocal()
@@ -65,7 +69,6 @@ def _fetch_group_counts():
         return {(r.code or "—", YEAR_LEVEL_LABELS.get(r.year_level, "—")): r.cnt for r in rows}
     finally:
         db.close()
-
 
 def get_session_by_id(session_id: int):
     """
@@ -104,11 +107,19 @@ def get_session_by_id(session_id: int):
             period_ids.append(p.id)
 
         # ── Total scan count ────────────────────────────────────────────
-        total_count = (
+        student_count = (
             db.query(func.count(Attendance.id))
             .filter(Attendance.session_id == ev.id)
             .scalar()
-        )
+        ) or 0
+
+        staff_count = (
+            db.query(func.count(StaffAttendance.id))
+            .filter(StaffAttendance.session_id == ev.id)
+            .scalar()
+        ) or 0
+
+        total_count = student_count + staff_count
 
         # ── Period stats (lightweight aggregation) ──────────────────────
         stats_rows = (
@@ -158,6 +169,7 @@ def get_session_by_id(session_id: int):
         return {
             "id": ev.id,
             "name": ev.name,
+            "attendee_type": ev.attendee_type,
             "periods": periods,
             "count": total_count or 0,
             "estimated_attendees": ev.estimated_attendees,
@@ -165,8 +177,10 @@ def get_session_by_id(session_id: int):
                 "present": total_count or 0,  # optional refinement later
                 "late": sum(v["late"] for v in period_stats.values())
             },
-            "period_stats": period_stats
-        }
+            "period_stats": period_stats,
+            "student_filter": ev.student_filter,
+            "staff_filter":   ev.staff_filter, 
+                }
 
     finally:
         db.close()
