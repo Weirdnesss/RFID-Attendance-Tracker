@@ -95,7 +95,8 @@ class AdminScreen(ctk.CTkFrame):
                     "name":                s.name,
                     "date":                s.date,
                     "created_at":          s.created_at,
-                    "estimated_attendees": s.estimated_attendees,
+                    "student_estimated":     s.student_estimated,
+                    "staff_estimated":       s.staff_estimated,
                     "period_count":        len(s.periods),
                 }
                 for s in sessions
@@ -135,7 +136,7 @@ class AdminScreen(ctk.CTkFrame):
         created      = s["created_at"].strftime("%I:%M %p") if s["created_at"] else "—"
         meta = (f"{s['date']}  ·  "
                 f"Started {created}  ·  "
-                f"{s['estimated_attendees'] or '—'} expected  ·  "
+                f"{s['student_estimated'] or '—'} expected  ·  "
                 f"{period_count} period{'s' if period_count != 1 else ''}")
         ctk.CTkLabel(
             row, text=meta,

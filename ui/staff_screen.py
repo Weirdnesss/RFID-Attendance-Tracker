@@ -19,6 +19,7 @@ from datetime import datetime
 from db.staff_db import _fetch_staff, _fetch_filter_options, _fetch_staff_attendance, PAGE_SIZE, STAFF_SIZE
 from ui.theme import (C_BG, C_SURFACE, C_BORDER, C_TEXT, C_MUTED,
                       C_ACCENT, C_SUCCESS, C_WARNING)
+from ui.components.pagination_bar import PaginationBar
 
 
 # ---------------------------------------------------------------------------
@@ -110,39 +111,41 @@ class StaffDetailPanel(ctk.CTkFrame):
         self._empty_lbl.pack(pady=40)
 
         # Pagination footer
-        self._page_bar = ctk.CTkFrame(self, fg_color=C_SURFACE,
-                                      corner_radius=0, height=40)
-        self._page_bar.grid(row=4, column=0, sticky="ew")
-        self._page_bar.grid_propagate(False)
-        self._page_bar.grid_columnconfigure(1, weight=1)
+        self._pbar = PaginationBar(self, on_prev=self._prev_page, on_next=self._next_page)
+        self._pbar.grid(row=6, column=0, sticky="ew")
+        # self._page_bar = ctk.CTkFrame(self, fg_color=C_SURFACE,
+        #                               corner_radius=0, height=40)
+        # self._page_bar.grid(row=4, column=0, sticky="ew")
+        # self._page_bar.grid_propagate(False)
+        # self._page_bar.grid_columnconfigure(1, weight=1)
 
-        self._prev_btn = ctk.CTkButton(
-            self._page_bar, text="← Prev", width=80, height=28,
-            fg_color="transparent", border_width=1, border_color=C_BORDER,
-            text_color=C_MUTED, hover_color=C_SURFACE,
-            font=ctk.CTkFont(size=11),
-            command=self._prev_page)
-        self._prev_btn.grid(row=0, column=0, padx=(12, 4), pady=6)
+        # self._prev_btn = ctk.CTkButton(
+        #     self._page_bar, text="← Prev", width=80, height=28,
+        #     fg_color="transparent", border_width=1, border_color=C_BORDER,
+        #     text_color=C_MUTED, hover_color=C_SURFACE,
+        #     font=ctk.CTkFont(size=11),
+        #     command=self._prev_page)
+        # self._prev_btn.grid(row=0, column=0, padx=(12, 4), pady=6)
 
-        self._page_lbl = ctk.CTkLabel(
-            self._page_bar, text="",
-            font=ctk.CTkFont(size=11), text_color=C_MUTED)
-        self._page_lbl.grid(row=0, column=1)
+        # self._page_lbl = ctk.CTkLabel(
+        #     self._page_bar, text="",
+        #     font=ctk.CTkFont(size=11), text_color=C_MUTED)
+        # self._page_lbl.grid(row=0, column=1)
 
-        self._next_btn = ctk.CTkButton(
-            self._page_bar, text="Next →", width=80, height=28,
-            fg_color="transparent", border_width=1, border_color=C_BORDER,
-            text_color=C_MUTED, hover_color=C_SURFACE,
-            font=ctk.CTkFont(size=11),
-            command=self._next_page)
-        self._next_btn.grid(row=0, column=2, padx=(4, 12), pady=6)
+        # self._next_btn = ctk.CTkButton(
+        #     self._page_bar, text="Next →", width=80, height=28,
+        #     fg_color="transparent", border_width=1, border_color=C_BORDER,
+        #     text_color=C_MUTED, hover_color=C_SURFACE,
+        #     font=ctk.CTkFont(size=11),
+        #     command=self._next_page)
+        # self._next_btn.grid(row=0, column=2, padx=(4, 12), pady=6)
 
-        self._page_bar.grid_remove()
+        self._pbar.grid_remove()
 
-        # internal state
-        self._total_records: int = 0
-        self._current_staff_id: str | None = None
-        self._current_page: int = 0
+        # # internal state
+        # self._total_records: int = 0
+        # self._current_staff_id: str | None = None
+        # self._current_page: int = 0
 
     def _render_page(self):
         for w in self._history_scroll.winfo_children():
@@ -187,10 +190,11 @@ class StaffDetailPanel(ctk.CTkFrame):
             ctk.CTkFrame(self._history_scroll, fg_color=C_BORDER,
                          height=1, corner_radius=0).pack(fill="x")
 
-        self._page_lbl.configure(
-            text=f"Page {self._current_page + 1} of {pages} · {total} records")
-        self._prev_btn.configure(state="normal" if self._current_page > 0 else "disabled")
-        self._next_btn.configure(state="normal" if self._current_page < pages - 1 else "disabled")
+        # self._page_lbl.configure(
+        #     text=f"Page {self._current_page + 1} of {pages} · {total} records")
+        # self._prev_btn.configure(state="normal" if self._current_page > 0 else "disabled")
+        # self._next_btn.configure(state="normal" if self._current_page < pages - 1 else "disabled")
+        self._pbar.update(self._current_page, pages)
         self._history_scroll._parent_canvas.yview_moveto(0)
 
     def _prev_page(self):
@@ -223,9 +227,9 @@ class StaffDetailPanel(ctk.CTkFrame):
 
         total, _ = _fetch_staff_attendance(data["staff_id"], offset=0, limit=1)
         if total == 0:
-            self._page_bar.grid_remove()
+            self._pbar.grid_remove()
         else:
-            self._page_bar.grid()
+            self._pbar.grid()
 
         self._render_page()
 
@@ -239,7 +243,7 @@ class StaffDetailPanel(ctk.CTkFrame):
         self._total_records = 0
         self._current_staff_id = None
         self._current_page = 0
-        self._page_bar.grid_remove()
+        self._pbar.grid_remove()
         for w in self._history_scroll.winfo_children():
             w.destroy()
         ctk.CTkLabel(self._history_scroll,
@@ -432,32 +436,37 @@ class StaffScreen(ctk.CTkFrame):
 
         self._build_list_pool()
 
+
         # Pagination bar
-        pbar = ctk.CTkFrame(left, fg_color=C_SURFACE,
-                            corner_radius=0, height=38)
-        pbar.grid(row=6, column=0, sticky="ew")
-        pbar.grid_propagate(False)
-        pbar.grid_columnconfigure(1, weight=1)
 
-        self._prev_btn = ctk.CTkButton(
-            pbar, text="← Prev", width=70, height=28,
-            fg_color="transparent", border_color=C_BORDER,
-            border_width=1, text_color=C_MUTED,
-            hover_color=C_BG, corner_radius=6,
-            command=self._prev_page)
-        self._prev_btn.grid(row=0, column=0, padx=(8, 4), pady=5)
+        self._pbar = PaginationBar(left, on_prev=self._prev_page, on_next=self._next_page)
+        self._pbar.grid(row=6, column=0, sticky="ew")
 
-        self._page_lbl = ctk.CTkLabel(
-            pbar, text="Page", font=ctk.CTkFont(size=11), text_color=C_MUTED)
-        self._page_lbl.grid(row=0, column=1)
+        # pbar = ctk.CTkFrame(left, fg_color=C_SURFACE,
+        #                     corner_radius=0, height=38)
+        # pbar.grid(row=6, column=0, sticky="ew")
+        # pbar.grid_propagate(False)
+        # pbar.grid_columnconfigure(1, weight=1)
 
-        self._next_btn = ctk.CTkButton(
-            pbar, text="Next →", width=70, height=28,
-            fg_color="transparent", border_color=C_BORDER,
-            border_width=1, text_color=C_MUTED,
-            hover_color=C_BG, corner_radius=6,
-            command=self._next_page)
-        self._next_btn.grid(row=0, column=2, padx=(4, 8), pady=5)
+        # self._prev_btn = ctk.CTkButton(
+        #     pbar, text="← Prev", width=70, height=28,
+        #     fg_color="transparent", border_color=C_BORDER,
+        #     border_width=1, text_color=C_MUTED,
+        #     hover_color=C_BG, corner_radius=6,
+        #     command=self._prev_page)
+        # self._prev_btn.grid(row=0, column=0, padx=(8, 4), pady=5)
+
+        # self._page_lbl = ctk.CTkLabel(
+        #     pbar, text="Page", font=ctk.CTkFont(size=11), text_color=C_MUTED)
+        # self._page_lbl.grid(row=0, column=1)
+
+        # self._next_btn = ctk.CTkButton(
+        #     pbar, text="Next →", width=70, height=28,
+        #     fg_color="transparent", border_color=C_BORDER,
+        #     border_width=1, text_color=C_MUTED,
+        #     hover_color=C_BG, corner_radius=6,
+        #     command=self._next_page)
+        # self._next_btn.grid(row=0, column=2, padx=(4, 8), pady=5)
 
         # ── Right panel ───────────────────────────────────────────────
         self._detail = StaffDetailPanel(self)
@@ -541,14 +550,16 @@ class StaffScreen(ctk.CTkFrame):
                 self._empty_lbl.pack_forget()
 
     def _update_pagination(self):
+        # total_pages = max(1, -(-self._total_count // PAGE_SIZE))
+        # self._page_lbl.configure(text=f"{self._page + 1} / {total_pages}")
+        # self._prev_btn.configure(
+        #     state="normal" if self._page > 0 else "disabled",
+        #     text_color=C_TEXT if self._page > 0 else C_MUTED)
+        # self._next_btn.configure(
+        #     state="normal" if self._page < total_pages - 1 else "disabled",
+        #     text_color=C_TEXT if self._page < total_pages - 1 else C_MUTED)
         total_pages = max(1, -(-self._total_count // PAGE_SIZE))
-        self._page_lbl.configure(text=f"{self._page + 1} / {total_pages}")
-        self._prev_btn.configure(
-            state="normal" if self._page > 0 else "disabled",
-            text_color=C_TEXT if self._page > 0 else C_MUTED)
-        self._next_btn.configure(
-            state="normal" if self._page < total_pages - 1 else "disabled",
-            text_color=C_TEXT if self._page < total_pages - 1 else C_MUTED)
+        self._pbar.update(self._page, total_pages)
 
     # ------------------------------------------------------------------
     # Navigation + filters

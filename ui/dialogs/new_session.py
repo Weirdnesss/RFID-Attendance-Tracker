@@ -592,6 +592,8 @@ class NewSessionDialog(ctk.CTkToplevel):
 
         self.result = None
         self._period_rows: list[PeriodRow] = []
+        self._student_estimated = 0
+        self._staff_estimated   = 0
         self._attendee_type = "students"   # "students" | "staff" | "both"
         self._student_filter: dict | None = None   # {"groups": [(prog, yr), ...]}
         self._staff_filter: dict | None = None     # {"departments": [...], "roles": [...]}
@@ -817,13 +819,15 @@ class NewSessionDialog(ctk.CTkToplevel):
     def _auto_estimate(self):
         try:
             atype = self._attendee_type
-            count = 0
+            self._student_estimated = 0
+            self._staff_estimated   = 0
 
             if atype in ("students", "both"):
-                count += _count_students(self._student_filter)
+                self._student_estimated = _count_students(self._student_filter)
             if atype in ("staff", "both"):
-                count += _count_staff(self._staff_filter)
+                self._staff_estimated = _count_staff(self._staff_filter)
 
+            count = self._student_estimated + self._staff_estimated
             self._estimate_var.set(str(count) if count else "")
 
             if atype == "students":
@@ -835,7 +839,7 @@ class NewSessionDialog(ctk.CTkToplevel):
             self._auto_lbl.configure(text=label)
         except Exception:
             pass
-
+        
     def _add_period(self, defaults: dict = None):
         idx = len(self._period_rows)
         row = PeriodRow(
@@ -895,11 +899,12 @@ class NewSessionDialog(ctk.CTkToplevel):
         dialog = ConfirmSessionDialog(self, {
             "name": name,
             "date": session_date,
-            "estimated_attendees": estimated,
             "periods": periods,
             "attendee_type": self._attendee_type,
             "student_filter": self._student_filter,
             "staff_filter": self._staff_filter,
+            "student_estimated":  self._student_estimated,
+            "staff_estimated":    self._staff_estimated,
             "academic_period_id": ap.id if ap else None,
         })
         self.wait_window(dialog)
@@ -910,13 +915,14 @@ class NewSessionDialog(ctk.CTkToplevel):
         success, session_id, message = start_session(
             name=name,
             date=session_date,
-            estimated_attendees=estimated,
             periods=periods,
             academic_period_id=ap.id if ap else None,
             terminal_id=terminal_id,
             attendee_type=self._attendee_type,
             student_filter=self._student_filter,
             staff_filter=self._staff_filter,
+            student_estimated=self._student_estimated,
+            staff_estimated=self._staff_estimated,
         )
 
         if success:
@@ -924,7 +930,8 @@ class NewSessionDialog(ctk.CTkToplevel):
                 "id": session_id,
                 "name": name,
                 "date": session_date,
-                "estimated_attendees": estimated,
+                "student_estimated": self._student_estimated,
+                "staff_estimated": self._staff_estimated,
                 "attendee_type": self._attendee_type,
                 "periods": periods,
                 "academic_period_id": ap.id if ap else None,
@@ -960,7 +967,8 @@ class ConfirmSessionDialog(ctk.CTkToplevel):
         info = ctk.CTkFrame(self, fg_color="transparent")
         info.pack(fill="x", padx=20)
         d = self._data
-        est = d["estimated_attendees"] if d["estimated_attendees"] is not None else "N/A"
+        total = (d["student_estimated"] or 0) + (d["staff_estimated"] or 0)
+        est = total if total is not None else "N/A"
 
         type_labels = {"students": "Students only", "staff": "Staff only", "both": "Students + Staff"}
 
@@ -1148,7 +1156,7 @@ class ChooseSessionDialog(ctk.CTkToplevel):
 
         period_count = len(s.periods)
         meta = (f"{s.date} · "
-                f"{s.estimated_attendees or '—'} expected · "
+                f"{s.student_estimated or '—'} expected · "
                 f"{period_count} period{'s' if period_count != 1 else ''}")
         ctk.CTkLabel(row, text=meta,
                      font=ctk.CTkFont(size=11),

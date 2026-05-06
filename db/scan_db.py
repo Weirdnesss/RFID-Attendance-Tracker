@@ -7,15 +7,17 @@ from db.students_db import YEAR_LEVEL_LABELS
 
 from sqlalchemy.exc import IntegrityError
 
-def start_session(name, date, estimated_attendees, periods, academic_period_id,
+def start_session(name, date, periods, academic_period_id,
                   terminal_id, attendee_type="students",
-                  student_filter=None, staff_filter=None):
+                  student_filter=None, staff_filter=None, 
+                  student_estimated=0, staff_estimated=0):
     db = SessionLocal()
     try:
         new_session = EventSession(
             name=name,
             date=date,
-            estimated_attendees=estimated_attendees,
+            student_estimated=student_estimated,
+            staff_estimated=staff_estimated,
             academic_period_id=academic_period_id,
             is_active=1,
             active_flag=1,
@@ -172,7 +174,6 @@ def get_session_by_id(session_id: int):
             "attendee_type": ev.attendee_type,
             "periods": periods,
             "count": total_count or 0,
-            "estimated_attendees": ev.estimated_attendees,
             "breakdown": {
                 "present": total_count or 0,  # optional refinement later
                 "late": sum(v["late"] for v in period_stats.values())
@@ -180,6 +181,8 @@ def get_session_by_id(session_id: int):
             "period_stats": period_stats,
             "student_filter": ev.student_filter,
             "staff_filter":   ev.staff_filter, 
+            "student_estimated": ev.student_estimated or 0,
+            "staff_estimated":   ev.staff_estimated   or 0,
                 }
 
     finally:

@@ -640,16 +640,28 @@ class ScanScreen(ctk.CTkFrame):
     def _process_with_db(self, card: CardData):
         """
         Router: look up the scanned ID against students first,
-        then fall back to staff. Delegates scan logic to the
-        appropriate handler.
+        then fall back to staff. Enforces attendee_type before
+        delegating to the appropriate handler.
         """
         db = SessionLocal()
         try:
+            attendee_type = self.active_session.get("attendee_type", "students")
+
             # ── Try student first ─────────────────────────────────────────
             student = db.query(Student).filter(
                 Student.student_id == card.student_id).first()
 
             if student:
+                # Enforce: reject students from staff-only sessions
+                if attendee_type == "staff":
+                    self._scan_area.show_error(
+                        "This session is for staff only — student cards are not accepted")
+                    self._add_log(
+                        f"{student.first_name} {student.last_name}",
+                        card.student_id, "error",
+                        datetime.now().strftime("%I:%M:%S %p"))
+                    return
+
                 tag = student.program.code if student.program else "Student"
                 name = f"{student.first_name} {student.last_name}"
                 now = datetime.now()
@@ -668,24 +680,35 @@ class ScanScreen(ctk.CTkFrame):
             staff = db.query(Staff).filter(
                 Staff.staff_id == str(card.student_id)).first()
 
-            if not staff:
-                self._scan_area.show_error(f"ID {card.student_id} not found")
-                self._add_log("Unknown card", card.student_id, "error",
-                              datetime.now().strftime("%I:%M:%S %p"))
+            if staff:
+                # Enforce: reject staff from students-only sessions
+                if attendee_type == "students":
+                    self._scan_area.show_error(
+                        "This session is for students only — staff cards are not accepted")
+                    self._add_log(
+                        f"{staff.first_name} {staff.last_name}",
+                        card.student_id, "error",
+                        datetime.now().strftime("%I:%M:%S %p"))
+                    return
+
+                tag = f"{staff.role or 'Staff'} · {staff.department or '—'}"
+                name = f"{staff.first_name} {staff.last_name}"
+                now = datetime.now()
+                period = self._get_active_period(self._scan_mode)
+                if period is None:
+                    if self._scan_mode == "out":
+                        self._scan_area.show_error("No active scan-out window right now")
+                    else:
+                        self._scan_area.show_error(
+                            "No active period right now — check session windows")
+                    return
+                self._process_staff_scan(db, staff, name, tag, now, period)
                 return
 
-            tag = f"{staff.role or 'Staff'} · {staff.department or '—'}"
-            name = f"{staff.first_name} {staff.last_name}"
-            now = datetime.now()
-            period = self._get_active_period(self._scan_mode)
-            if period is None:
-                if self._scan_mode == "out":
-                    self._scan_area.show_error("No active scan-out window right now")
-                else:
-                    self._scan_area.show_error(
-                        "No active period right now — check session windows")
-                return
-            self._process_staff_scan(db, staff, name, tag, now, period)
+            # ── Not found in either table ─────────────────────────────────
+            self._scan_area.show_error(f"ID {card.student_id} not found")
+            self._add_log("Unknown card", card.student_id, "error",
+                        datetime.now().strftime("%I:%M:%S %p"))
 
         finally:
             db.close()
@@ -861,6 +884,7 @@ class ScanScreen(ctk.CTkFrame):
             period_id=period["id"],
             status=status,
             time_in=now,
+            terminal_id=terminal_id,
         ))
         db.commit()
 

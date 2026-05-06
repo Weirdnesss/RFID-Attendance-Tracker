@@ -208,12 +208,16 @@ class Session(Base):
     id                  = Column(Integer, primary_key=True, autoincrement=True)
     name                = Column(String(255), nullable=False)
     date                = Column(Date, nullable=False, default=date.today)
-    estimated_attendees = Column(Integer, nullable=True)
+    student_estimated = Column(Integer, nullable=True)
+    staff_estimated   = Column(Integer, nullable=True)
     created_at          = Column(DateTime, default=datetime.now)
     ended_at            = Column(DateTime, nullable=True, default=None)
     academic_period_id  = Column(Integer,
                                  ForeignKey("academic_periods.id"),
                                  nullable=True)
+    attendee_type  = Column(Enum("students", "staff", "both"), nullable=False, default="students")
+    student_filter = Column(JSON, nullable=True)  # e.g. {"programs": ["BSIT"], "yearlevels": ["1st Year"]}
+    staff_filter   = Column(JSON, nullable=True)  # e.g. {"departments": ["CCS"], "roles": ["Teacher"]}
     is_active   = Column(Integer, default=0)
     active_flag = Column(Integer, default=None)  # NULL = inactive, 1 = active (unique enforces one active session)
 
@@ -349,9 +353,6 @@ class Attendance(Base):
         nullable=False,
         default="present",
     )
-    attendee_type  = Column(Enum("students", "staff", "both"), nullable=False, default="students")
-    student_filter = Column(JSON, nullable=True)  # e.g. {"programs": ["BSIT"], "yearlevels": ["1st Year"]}
-    staff_filter   = Column(JSON, nullable=True)  # e.g. {"departments": ["CCS"], "roles": ["Teacher"]}
     time_in  = Column(DateTime, nullable=True)
     time_out = Column(DateTime, nullable=True)
     terminal_id = Column(String(50), nullable=True)
@@ -374,6 +375,7 @@ class StaffAttendance(Base):
     status     = Column(Enum("present", "late", "absent"), nullable=False, default="present")
     time_in    = Column(DateTime, nullable=True)
     time_out   = Column(DateTime, nullable=True)
+    terminal_id = Column(String(50), nullable=True)
 
     staff   = relationship("Staff",         back_populates="attendance_records")
     session = relationship("Session")
