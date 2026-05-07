@@ -654,8 +654,7 @@ class ScanScreen(ctk.CTkFrame):
             if student:
                 # Enforce: reject students from staff-only sessions
                 if attendee_type == "staff":
-                    self._scan_area.show_error(
-                        "This session is for staff only — student cards are not accepted")
+                    self._scan_area.show_wrong_type("staff")
                     self._add_log(
                         f"{student.first_name} {student.last_name}",
                         card.student_id, "error",
@@ -668,10 +667,9 @@ class ScanScreen(ctk.CTkFrame):
                 period = self._get_active_period(self._scan_mode)
                 if period is None:
                     if self._scan_mode == "out":
-                        self._scan_area.show_error("No active scan-out window right now")
+                        self._scan_area.show_no_timeout_period()
                     else:
-                        self._scan_area.show_error(
-                            "No active period right now — check session windows")
+                        self._scan_area.show_no_period()
                     return
                 self._process_student_scan(db, student, name, tag, now, period)
                 return
@@ -683,8 +681,7 @@ class ScanScreen(ctk.CTkFrame):
             if staff:
                 # Enforce: reject staff from students-only sessions
                 if attendee_type == "students":
-                    self._scan_area.show_error(
-                        "This session is for students only — staff cards are not accepted")
+                    self._scan_area.show_wrong_type("students")
                     self._add_log(
                         f"{staff.first_name} {staff.last_name}",
                         card.student_id, "error",
@@ -697,18 +694,17 @@ class ScanScreen(ctk.CTkFrame):
                 period = self._get_active_period(self._scan_mode)
                 if period is None:
                     if self._scan_mode == "out":
-                        self._scan_area.show_error("No active scan-out window right now")
+                        self._scan_area.show_no_timeout_period()
                     else:
-                        self._scan_area.show_error(
-                            "No active period right now — check session windows")
+                        self._scan_area.show_no_period()
                     return
                 self._process_staff_scan(db, staff, name, tag, now, period)
                 return
 
             # ── Not found in either table ─────────────────────────────────
-            self._scan_area.show_error(f"ID {card.student_id} not found")
-            self._add_log("Unknown card", card.student_id, "error",
-                        datetime.now().strftime("%I:%M:%S %p"))
+            self._scan_area.show_unknown_card(card.student_id)
+            #self._add_log("Unknown card", card.student_id, "error",
+                       # datetime.now().strftime("%I:%M:%S %p"))
 
         finally:
             db.close()
@@ -724,8 +720,7 @@ class ScanScreen(ctk.CTkFrame):
         # ── SCAN OUT ──────────────────────────────────────────────────────
         if self._scan_mode == "out":
             if not period["timeout_enabled"]:
-                self._scan_area.show_error(
-                    f"Time-out tracking is off for '{period['name']}'")
+                self._scan_area.show_timeout_disabled(period["name"])
                 return
 
             if period["timeout_start"] and period["timeout_end"]:
@@ -733,7 +728,7 @@ class ScanScreen(ctk.CTkFrame):
                 if not (period["timeout_start"] <= now_t <= period["timeout_end"]):
                     ts = period["timeout_start"].strftime("%I:%M %p").lstrip("0")
                     te = period["timeout_end"].strftime("%I:%M %p").lstrip("0")
-                    self._scan_area.show_error(f"Scan-out window is {ts} – {te}")
+                    self._scan_area.show_scan_window_closed(ts, te)
                     return
 
             if not existing:
@@ -817,8 +812,7 @@ class ScanScreen(ctk.CTkFrame):
         # ── SCAN OUT ──────────────────────────────────────────────────────
         if self._scan_mode == "out":
             if not period["timeout_enabled"]:
-                self._scan_area.show_error(
-                    f"Time-out tracking is off for '{period['name']}'")
+                self._scan_area.show_timeout_disabled(period["name"])
                 return
 
             if period["timeout_start"] and period["timeout_end"]:
@@ -826,7 +820,7 @@ class ScanScreen(ctk.CTkFrame):
                 if not (period["timeout_start"] <= now_t <= period["timeout_end"]):
                     ts = period["timeout_start"].strftime("%I:%M %p").lstrip("0")
                     te = period["timeout_end"].strftime("%I:%M %p").lstrip("0")
-                    self._scan_area.show_error(f"Scan-out window is {ts} – {te}")
+                    self._scan_area.show_scan_window_closed(ts, te)
                     return
 
             if not existing:
@@ -838,6 +832,7 @@ class ScanScreen(ctk.CTkFrame):
                 return
 
             existing.time_out = now
+            existing.terminal_id = terminal_id
             db.commit()
 
             ps = self.active_session.setdefault("period_stats", {})
@@ -912,12 +907,13 @@ class ScanScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _add_log(self, name, entity_id, status, time_str):
-        entry = LogEntry(self._log_frame, name, entity_id, status, time_str)
-        entry.pack(fill="x", padx=20, pady=3)
+        entry = LogEntry(
+            self._log_frame, name, entity_id, status, time_str,
+            index=len(self._log_entries))
+        entry.pack(fill="x")
         self._log_entries.append(entry)
         if len(self._log_entries) > 20:
             self._log_entries.pop(0).destroy()
         self._safe_after(
             50,
-            lambda: self._log_frame._parent_canvas.yview_moveto(1.0),
-        )
+            lambda: self._log_frame._parent_canvas.yview_moveto(1.0))
