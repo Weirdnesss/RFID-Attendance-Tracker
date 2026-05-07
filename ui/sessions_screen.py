@@ -22,6 +22,7 @@ from db.session_db import (_fetch_sessions, _fetch_session_detail,
 from ui.theme import (C_BG, C_SURFACE, C_BORDER, C_TEXT, C_MUTED,
                       C_ACCENT, C_SUCCESS, C_WARNING, C_ERROR, PERIOD_COLORS)
 from ui.components.pagination_bar import PaginationBar
+from ui.components.base_list_item import BaseListItem
 
 
 # ---------------------------------------------------------------------------
@@ -106,31 +107,8 @@ class RecordSubPanel(ctk.CTkFrame):
         self._empty_lbl.pack(pady=20)
 
         # Pagination bar
-        pbar = ctk.CTkFrame(self, fg_color=C_SURFACE,
-                            corner_radius=0, height=36)
-        pbar.grid(row=2, column=0, sticky="ew")
-        pbar.grid_propagate(False)
-        pbar.grid_columnconfigure(1, weight=1)
-
-        self._prev_btn = ctk.CTkButton(
-            pbar, text="← Prev", width=70, height=26,
-            fg_color="transparent", border_color=C_BORDER,
-            border_width=1, text_color=C_MUTED,
-            hover_color=C_BG, corner_radius=6,
-            state="disabled", command=self._prev_page)
-        self._prev_btn.grid(row=0, column=0, padx=(8, 4), pady=5)
-
-        self._page_lbl = ctk.CTkLabel(
-            pbar, text="", font=ctk.CTkFont(size=11), text_color=C_MUTED)
-        self._page_lbl.grid(row=0, column=1)
-
-        self._next_btn = ctk.CTkButton(
-            pbar, text="Next →", width=70, height=26,
-            fg_color="transparent", border_color=C_BORDER,
-            border_width=1, text_color=C_MUTED,
-            hover_color=C_BG, corner_radius=6,
-            state="disabled", command=self._next_page)
-        self._next_btn.grid(row=0, column=2, padx=(4, 8), pady=5)
+        self._pbar = PaginationBar(self, on_prev=self._prev_page, on_next=self._next_page, height=36)
+        self._pbar.grid(row=2, column=0, sticky="ew")
 
         # Pre-build row pool
         self._row_frames  = []
@@ -168,9 +146,9 @@ class RecordSubPanel(ctk.CTkFrame):
             r.pack_forget()
             d.pack_forget()
         self._empty_lbl.pack(pady=20)
-        self._page_lbl.configure(text="")
-        self._prev_btn.configure(state="disabled")
-        self._next_btn.configure(state="disabled")
+        # self._page_lbl.configure(text="")
+        # self._prev_btn.configure(state="disabled")
+        # self._next_btn.configure(state="disabled")
 
     def _render(self):
         self._empty_lbl.pack_forget()
@@ -228,21 +206,8 @@ class RecordSubPanel(ctk.CTkFrame):
     def _update_pagination(self):
         total = len(self._all_records)
         pages = max(1, math.ceil(total / PAGE_SIZE))
-        start = self._page * PAGE_SIZE + 1
-        end   = min((self._page + 1) * PAGE_SIZE, total)
 
-        if total == 0:
-            self._page_lbl.configure(text="No records")
-        else:
-            self._page_lbl.configure(
-                text=f"Page {self._page + 1} / {pages}  ({start}–{end} of {total})")
-
-        self._prev_btn.configure(
-            state="normal" if self._page > 0 else "disabled")
-        self._next_btn.configure(
-            state="normal"
-            if (self._page + 1) * PAGE_SIZE < total
-            else "disabled")
+        self._pbar.update(self._page, pages)
 
     def _prev_page(self):
         if self._page > 0:
@@ -606,118 +571,59 @@ class SessionDetailPanel(ctk.CTkFrame):
 # Session list item
 # ---------------------------------------------------------------------------
 
-class SessionListItem(ctk.CTkFrame):
+class SessionListItem(BaseListItem):
 
-    def __init__(self, parent, data: dict, on_select, selected=False, **kwargs):
-        super().__init__(
-            parent,
-            fg_color="#1e2130" if selected else C_SURFACE,
-            corner_radius=10, border_width=1,
-            border_color=C_ACCENT if selected else C_BORDER,
-            **kwargs)
-
-        self._data      = data
-        self._on_select = on_select
-        self._selected  = selected
-
-        self.bind("<Button-1>", self._clicked)
-
-        top = ctk.CTkFrame(self, fg_color="transparent")
-        top.pack(fill="x", padx=14, pady=(10, 2))
-
-        self._name_lbl = ctk.CTkLabel(
-            top, text=data["name"],
-            font=ctk.CTkFont(size=13, weight="bold"),
-            text_color=C_ACCENT if selected else C_TEXT,
-            anchor="w")
-        self._name_lbl.pack(side="left")
-
-        atype = data.get("attendee_type", "students")
-        ctk.CTkLabel(
-            top,
-            text=_TYPE_LABEL.get(atype, "Students"),
+    def _build_top(self, top):
+        self._type_badge = ctk.CTkLabel(
+            top, text="",
             font=ctk.CTkFont(size=9, weight="bold"),
-            text_color=_TYPE_COLOR.get(atype, "#38bdf8"),
-            fg_color="#12141b", corner_radius=4,
-        ).pack(side="left", padx=(8, 0))
+            fg_color="#12141b", corner_radius=4)
+        self._type_badge.pack(side="left", padx=(8, 0))
 
-        ctk.CTkLabel(
-            top, text=f"{data['total']} scans",
-            font=ctk.CTkFont(size=11), text_color=C_MUTED,
-        ).pack(side="right")
+        ctk.CTkLabel(top, text="",
+                     font=ctk.CTkFont(size=11),
+                     text_color=C_MUTED).pack(side="right")  # scans count
 
-        bot = ctk.CTkFrame(self, fg_color="transparent")
-        bot.pack(anchor="n", padx=14, pady=(0, 10))
-
-        ctk.CTkLabel(bot, text=str(data["date"]),
-                     font=ctk.CTkFont(size=11), text_color=C_MUTED,
-                     ).pack(side="left")
-        ctk.CTkLabel(bot,
-                     text=f" · {data['period_count']} period{'s' if data['period_count'] != 1 else ''}",
-                     font=ctk.CTkFont(size=11), text_color=C_MUTED,
-                     ).pack(side="left")
+    def _build_bottom(self, bot):
+        ctk.CTkLabel(bot, text="",
+                     font=ctk.CTkFont(size=11),
+                     text_color=C_MUTED).pack(side="left")   # date
+        ctk.CTkLabel(bot, text="",
+                     font=ctk.CTkFont(size=11),
+                     text_color=C_MUTED).pack(side="left")   # periods
 
         pills = ctk.CTkFrame(bot, fg_color="transparent")
         pills.pack(side="right")
-        for label, val, color in [
-            ("P", data["present"], C_SUCCESS),
-            ("L", data["late"],    C_WARNING),
-        ]:
+        for label, color in [("P", C_SUCCESS), ("L", C_WARNING)]:
             p = ctk.CTkFrame(pills, fg_color="transparent")
             p.pack(side="left", padx=(4, 0))
-            ctk.CTkLabel(p, text=f"{label}:{val}",
+            ctk.CTkLabel(p, text=f"{label}:—",
                          font=ctk.CTkFont(size=10),
                          text_color=color).pack()
 
-        for frame in [top, bot, pills]:
-            frame.bind("<Button-1>", self._clicked)
-            for child in frame.winfo_children():
-                child.bind("<Button-1>", self._clicked)
+    def _update_contents(self, data: dict):
+        atype = data.get("attendee_type", "students")
+        self._name_lbl.configure(text=data["name"])
+        self._type_badge.configure(
+            text=_TYPE_LABEL.get(atype, "Students"),
+            text_color=_TYPE_COLOR.get(atype, "#38bdf8"))
 
-    def _clicked(self, _event=None):
-        self._on_select(self._data)
+        top_ch = self.winfo_children()[0].winfo_children()
+        top_ch[2].configure(text=f"{data['total']} scans")
 
-    def update_data(self, data: dict, selected: bool = False):
-        self._data     = data
-        self._selected = selected
-
-        self._name_lbl.configure(
-            text=data["name"],
-            text_color=C_ACCENT if selected else C_TEXT)
-        self.configure(
-            fg_color="#1e2130" if selected else C_SURFACE,
-            border_color=C_ACCENT if selected else C_BORDER)
-
-        top      = self.winfo_children()[0]
-        bot      = self.winfo_children()[1]
-        top_ch   = top.winfo_children()
-        bot_ch   = bot.winfo_children()
-
-        top_ch[2].configure(text=f"{data['total']} scans")  # total lbl
+        bot    = self.winfo_children()[1]
+        bot_ch = bot.winfo_children()
         bot_ch[0].configure(text=str(data["date"]))
         bot_ch[1].configure(
             text=f" · {data['period_count']} period{'s' if data['period_count'] != 1 else ''}")
 
         pills = bot_ch[2]
-        for frame, val in zip(pills.winfo_children(),
-                               [data["present"], data["late"]]):
+        for frame, val in zip(pills.winfo_children(), [data["present"], data["late"]]):
             frame.winfo_children()[0].configure(
                 text=f"{frame.winfo_children()[0].cget('text')[0]}:{val}")
 
-    def select(self):
-        if self._selected:
-            return
-        self._selected = True
-        self.configure(fg_color="#1e2130", border_color=C_ACCENT)
-        self._name_lbl.configure(text_color=C_ACCENT)
-
-    def deselect(self):
-        if not self._selected:
-            return
-        self._selected = False
-        self.configure(fg_color=C_SURFACE, border_color=C_BORDER)
-        self._name_lbl.configure(text_color=C_TEXT)
-
+    def _get_id(self, data: dict):
+        return data["id"]
 
 # ---------------------------------------------------------------------------
 # Sessions screen
@@ -792,42 +698,11 @@ class SessionsScreen(ctk.CTkFrame):
         self._list_scroll.grid_columnconfigure(0, weight=1)
 
         self._build_list_pool()
-
+        
+        # Pagination bar
         self._pbar = PaginationBar(left, on_prev=self._prev_page, on_next=self._next_page)
         self._pbar.grid(row=6, column=0, sticky="ew")
-        # pbar = ctk.CTkFrame(left, fg_color=C_SURFACE,
-        #                     corner_radius=0, height=38)
-        # pbar.grid(row=3, column=0, sticky="ew")
-        # pbar.grid_propagate(False)
-        # pbar.grid_columnconfigure(1, weight=1)
 
-        # self._prev_btn = ctk.CTkButton(
-        #     pbar, text="← Prev", width=70, height=28,
-        #     fg_color="transparent", border_color=C_BORDER,
-        #     border_width=1, text_color=C_MUTED,
-        #     hover_color=C_BG, corner_radius=6,
-        #     command=self._prev_page)
-        # self._prev_btn.grid(row=0, column=0, padx=(8, 4), pady=5)
-
-        # self._page_lbl = ctk.CTkLabel(
-        #     pbar, text="", font=ctk.CTkFont(size=11), text_color=C_MUTED)
-        # self._page_lbl.grid(row=0, column=1)
-
-        # self._next_btn = ctk.CTkButton(
-        #     pbar, text="Next →", width=70, height=28,
-        #     fg_color="transparent", border_color=C_BORDER,
-        #     border_width=1, text_color=C_MUTED,
-        #     hover_color=C_BG, corner_radius=6,
-        #     command=self._next_page)
-        # self._next_btn.grid(row=0, column=2, padx=(4, 8), pady=5)
-
-        # ctk.CTkButton(
-        #     left, text="↻ Refresh", height=36,
-        #     fg_color="transparent", border_color=C_BORDER,
-        #     border_width=1, text_color=C_MUTED,
-        #     hover_color=C_BG, corner_radius=0,
-        #     command=self.refresh,
-        # ).grid(row=4, column=0, sticky="ew")
 
         # ── Right panel ───────────────────────────────────────────────
         self._detail = SessionDetailPanel(
