@@ -33,7 +33,7 @@ class StaffDialog(ctk.CTkToplevel):
         self._data = staff_data or {}
 
         self.title("Edit Staff" if self._edit else "Add Staff")
-        self.geometry("440x520")
+        self.geometry("440x640")
         self.resizable(False, False)
         self.configure(fg_color=C_SURFACE)
         self.grab_set()
@@ -67,7 +67,7 @@ class StaffDialog(ctk.CTkToplevel):
 
         # ── Form ──────────────────────────────────────────────────────
         body = ctk.CTkFrame(self, fg_color="transparent")
-        body.pack(fill="both", expand=True, padx=20, pady=12)
+        body.pack(fill="x", expand=True, padx=20, pady=12)
 
         def _field(label, row, var, placeholder="", width=None):
             ctk.CTkLabel(body, text=label,

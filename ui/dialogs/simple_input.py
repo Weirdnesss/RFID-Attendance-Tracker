@@ -14,7 +14,7 @@ class SimpleInputDialog(ctk.CTkToplevel):
                  second_label: str = None, second_value: str = "", **kwargs):
         super().__init__(parent, **kwargs)
         self.title(title)
-        self.geometry("360x200" if second_label else "360x160")
+        self.geometry("360x260" if second_label else "360x200")
         self.configure(fg_color=C_SURFACE)
         self.grab_set()
         self.resizable(False, False)

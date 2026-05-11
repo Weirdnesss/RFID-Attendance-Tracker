@@ -76,7 +76,7 @@ class RecordSubPanel(ctk.CTkFrame):
         lbl_row.grid_propagate(False)
 
         ctk.CTkFrame(lbl_row, fg_color=label_color,
-                     width=4, corner_radius=2).pack(side="left", padx=(0, 8), fill="y")
+                     width=4, height=20, corner_radius=2).pack(side="left", padx=(0, 8))
         ctk.CTkLabel(lbl_row, text=label.upper(),
                      font=ctk.CTkFont(size=10, weight="bold"),
                      text_color=label_color).pack(side="left")

@@ -693,7 +693,7 @@ class AdminScreen(ctk.CTkFrame):
     # ------------------------------------------------------------------
 
     def _build_ui(self):
-        self.grid_rowconfigure(1, weight=1)
+        self.grid_rowconfigure(2, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
         # ── Header ────────────────────────────────────────────────────────
