@@ -15,7 +15,7 @@ import customtkinter as ctk
 from datetime import datetime, timedelta, time as dtime
 import os
 
-from db.scan_db import get_session_by_id
+from db.scan_db import get_session_by_id, _empty_type_stats, _empty_period_stats
 
 terminal_id = os.getenv("TERMINAL_ID", "UNKNOWN")
 
@@ -41,6 +41,10 @@ from ui.theme import (
 _PERIOD_COLORS = ["#3ecf8e", "#6c8fff", "#f0a843", "#e05c5c",
                   "#a78bfa", "#5DCAA5", "#F0997B"]
 
+# Icons for student vs staff rows in pills
+_ICON_STUDENT = "👤"
+_ICON_STAFF   = "🪪"
+
 
 class ScanScreen(ctk.CTkFrame):
     """
@@ -60,7 +64,7 @@ class ScanScreen(ctk.CTkFrame):
         self._selected_session_id = None
         self._last_session_id = None
         self._last_render_state = None
-        self._pill_widgets = {}     # {period_id: {frame, scanned, late, timed_out, ...}}
+        self._pill_widgets = {}     # {period_id: {frame, students:{...}, staff:{...}, ...}}
         self._summary_widgets = {}  # holds the rightmost summary pill widgets
         self._build_ui()
         self._safe_after(500, self._start_rfid)
@@ -94,9 +98,20 @@ class ScanScreen(ctk.CTkFrame):
                     p["timeout_enabled"],
                     p["timeout_start"],
                     p["timeout_end"],
-                    session.get("period_stats", {}).get(p["id"], {}).get("scanned", 0),
-                    session.get("period_stats", {}).get(p["id"], {}).get("late", 0),
-                    session.get("period_stats", {}).get(p["id"], {}).get("timed_out", 0),
+                    # students
+                    session.get("period_stats", {}).get(p["id"], {})
+                           .get("students", {}).get("scanned", 0),
+                    session.get("period_stats", {}).get(p["id"], {})
+                           .get("students", {}).get("late", 0),
+                    session.get("period_stats", {}).get(p["id"], {})
+                           .get("students", {}).get("timed_out", 0),
+                    # staff
+                    session.get("period_stats", {}).get(p["id"], {})
+                           .get("staff", {}).get("scanned", 0),
+                    session.get("period_stats", {}).get(p["id"], {})
+                           .get("staff", {}).get("late", 0),
+                    session.get("period_stats", {}).get(p["id"], {})
+                           .get("staff", {}).get("timed_out", 0),
                 )
                 for p in session.get("periods", [])
             ),
@@ -163,22 +178,22 @@ class ScanScreen(ctk.CTkFrame):
             command=lambda: self._set_mode("out"))
         self._out_btn.pack(side="left", padx=(1, 2), pady=2)
 
-        # ── DEV: manual scan input ───────────────────────────────────────────
-        self._dev_id_var = tk.StringVar()
-        self._dev_entry = ctk.CTkEntry(
-            sbar, textvariable=self._dev_id_var,
+        # ── Manual scan input ───────────────────────────────────────────
+        self._manual_id_var = tk.StringVar()
+        self._manual_entry = ctk.CTkEntry(
+            sbar, textvariable=self._manual_id_var,
             placeholder_text="ID",
             fg_color=C_BG, border_color=C_BORDER,
             text_color=C_TEXT, height=28, width=100)
-        self._dev_entry.grid(row=0, column=6, padx=(8, 2))
-        self._dev_entry.bind("<Return>", lambda e: self._dev_scan())
+        self._manual_entry.grid(row=0, column=6, padx=(8, 2))
+        self._manual_entry.bind("<Return>", lambda e: self._manual_scan())
 
         ctk.CTkButton(
-            sbar, text="Simulate Scan", width=110, height=28,
+            sbar, text="Manual Scan", width=110, height=28,
             fg_color="#2a2d3a", hover_color=C_BORDER,
             text_color=C_MUTED, border_width=1, border_color=C_BORDER,
             font=ctk.CTkFont(size=11),
-            command=self._dev_scan,
+            command=self._manual_scan,
         ).grid(row=0, column=7, padx=(2, 16))
 
         if self._on_exit:
@@ -224,13 +239,13 @@ class ScanScreen(ctk.CTkFrame):
             font=ctk.CTkFont(size=12), text_color=C_MUTED)
         self._reader_lbl.grid(row=0, column=0, padx=20, pady=8)
 
-    def _dev_scan(self):
-        sid = self._dev_id_var.get().strip()
+    def _manual_scan(self):
+        sid = self._manual_id_var.get().strip()
         if not sid:
             return
-        fake_card = CardData(raw="DEV_MODE", uid=f"DEV-{sid}", student_id=int(sid))
+        fake_card = CardData(raw="MANUAL_MODE", uid=f"ID-{sid}", student_id=int(sid))
         self._on_card(fake_card)
-        self._dev_id_var.set("")
+        self._manual_id_var.set("")
 
     def _build_info_strip(self):
         inner = ctk.CTkFrame(self._info_strip, fg_color="transparent")
@@ -240,7 +255,7 @@ class ScanScreen(ctk.CTkFrame):
             inner,
             fg_color="transparent",
             orientation="horizontal",
-            height=90,
+            height=110,
             scrollbar_button_color=C_BORDER,
             scrollbar_button_hover_color=C_MUTED,
         )
@@ -261,6 +276,7 @@ class ScanScreen(ctk.CTkFrame):
 
         now = datetime.now().time()
         periods = self.active_session.get("periods", [])
+        attendee_type = self.active_session.get("attendee_type", "students")
 
         for i, p in enumerate(periods):
             pid = p["id"]
@@ -282,7 +298,6 @@ class ScanScreen(ctk.CTkFrame):
             name_row = ctk.CTkFrame(pill, fg_color="transparent")
             name_row.pack(anchor="w", padx=8, pady=(5, 0))
 
-            # Active dot — stored so we can show/hide it
             active_dot = ctk.CTkFrame(
                 name_row, width=5, height=5,
                 fg_color=C_SUCCESS, corner_radius=3)
@@ -332,45 +347,109 @@ class ScanScreen(ctk.CTkFrame):
                         fg_color=fg, text_color=tc, corner_radius=3,
                     ).pack(side="left", padx=(0, 3))
 
-            # ── Stat row ────────────────────────────────────────────────────
-            stat_row = ctk.CTkFrame(pill, fg_color="transparent")
-            stat_row.pack(anchor="w", padx=8, pady=(4, 6))
+            # ── Divider ──────────────────────────────────────────────────────
+            ctk.CTkFrame(pill, fg_color=C_BORDER, height=1).pack(
+                fill="x", padx=8, pady=(4, 0))
 
-            scanned_lbl = ctk.CTkLabel(
-                stat_row, text="0",
-                font=ctk.CTkFont(size=11, weight="bold"), text_color=C_ACCENT)
-            scanned_lbl.pack(side="left", padx=(0, 2))
-            ctk.CTkLabel(stat_row, text="signed in",
-                         font=ctk.CTkFont(size=9), text_color=C_MUTED).pack(
-                side="left", padx=(0, 8))
+            # ── Stats: one row per attendee type ─────────────────────────────
+            #
+            # Each row:  ICON  N signed in  [N late]  [N signed out]
+            #
+            # We only render the row(s) relevant to the session's attendee_type.
+            # "mixed" (future-proof) renders both rows.
 
-            late_lbl = timed_out_lbl = None
+            show_students = attendee_type in ("students", "mixed")
+            show_staff    = attendee_type in ("staff",    "mixed")
 
-            if p.get("late_enabled"):
-                late_lbl = ctk.CTkLabel(
-                    stat_row, text="0",
-                    font=ctk.CTkFont(size=11, weight="bold"), text_color=C_WARNING)
-                late_lbl.pack(side="left", padx=(0, 2))
-                ctk.CTkLabel(stat_row, text="late",
+            stu_scanned_lbl = stu_late_lbl = stu_timed_out_lbl = None
+            stf_scanned_lbl = stf_late_lbl = stf_timed_out_lbl = None
+
+            if show_students:
+                stu_row = ctk.CTkFrame(pill, fg_color="transparent")
+                stu_row.pack(anchor="w", padx=8, pady=(4, 0))
+
+                ctk.CTkLabel(
+                    stu_row, text=_ICON_STUDENT,
+                    font=ctk.CTkFont(size=10), text_color=C_MUTED,
+                ).pack(side="left", padx=(0, 4))
+
+                stu_scanned_lbl = ctk.CTkLabel(
+                    stu_row, text="0",
+                    font=ctk.CTkFont(size=11, weight="bold"), text_color=C_ACCENT)
+                stu_scanned_lbl.pack(side="left", padx=(0, 2))
+                ctk.CTkLabel(stu_row, text="in",
                              font=ctk.CTkFont(size=9), text_color=C_MUTED).pack(
                     side="left", padx=(0, 8))
 
-            if p.get("timeout_enabled"):
-                timed_out_lbl = ctk.CTkLabel(
-                    stat_row, text="0",
-                    font=ctk.CTkFont(size=11, weight="bold"), text_color="#a78bfa")
-                timed_out_lbl.pack(side="left", padx=(0, 2))
-                ctk.CTkLabel(stat_row, text="signed out",
+                if p.get("late_enabled"):
+                    stu_late_lbl = ctk.CTkLabel(
+                        stu_row, text="0",
+                        font=ctk.CTkFont(size=11, weight="bold"), text_color=C_WARNING)
+                    stu_late_lbl.pack(side="left", padx=(0, 2))
+                    ctk.CTkLabel(stu_row, text="late",
+                                 font=ctk.CTkFont(size=9), text_color=C_MUTED).pack(
+                        side="left", padx=(0, 8))
+
+                if p.get("timeout_enabled"):
+                    stu_timed_out_lbl = ctk.CTkLabel(
+                        stu_row, text="0",
+                        font=ctk.CTkFont(size=11, weight="bold"), text_color="#a78bfa")
+                    stu_timed_out_lbl.pack(side="left", padx=(0, 2))
+                    ctk.CTkLabel(stu_row, text="out",
+                                 font=ctk.CTkFont(size=9), text_color=C_MUTED).pack(
+                        side="left", padx=(0, 8))
+
+            if show_staff:
+                stf_row = ctk.CTkFrame(pill, fg_color="transparent")
+                stf_row.pack(anchor="w", padx=8, pady=(2, 6))
+
+                ctk.CTkLabel(
+                    stf_row, text=_ICON_STAFF,
+                    font=ctk.CTkFont(size=10), text_color=C_MUTED,
+                ).pack(side="left", padx=(0, 4))
+
+                stf_scanned_lbl = ctk.CTkLabel(
+                    stf_row, text="0",
+                    font=ctk.CTkFont(size=11, weight="bold"), text_color=C_ACCENT)
+                stf_scanned_lbl.pack(side="left", padx=(0, 2))
+                ctk.CTkLabel(stf_row, text="in",
                              font=ctk.CTkFont(size=9), text_color=C_MUTED).pack(
                     side="left", padx=(0, 8))
+
+                if p.get("late_enabled"):
+                    stf_late_lbl = ctk.CTkLabel(
+                        stf_row, text="0",
+                        font=ctk.CTkFont(size=11, weight="bold"), text_color=C_WARNING)
+                    stf_late_lbl.pack(side="left", padx=(0, 2))
+                    ctk.CTkLabel(stf_row, text="late",
+                                 font=ctk.CTkFont(size=9), text_color=C_MUTED).pack(
+                        side="left", padx=(0, 8))
+
+                if p.get("timeout_enabled"):
+                    stf_timed_out_lbl = ctk.CTkLabel(
+                        stf_row, text="0",
+                        font=ctk.CTkFont(size=11, weight="bold"), text_color="#a78bfa")
+                    stf_timed_out_lbl.pack(side="left", padx=(0, 2))
+                    ctk.CTkLabel(stf_row, text="out",
+                                 font=ctk.CTkFont(size=9), text_color=C_MUTED).pack(
+                        side="left", padx=(0, 8))
+
+            # bottom padding when only one row
+            if show_students and not show_staff:
+                pill.pack_configure()   # no-op; just ensure bottom gap
+                ctk.CTkFrame(pill, fg_color="transparent", height=6).pack()
 
             self._pill_widgets[pid] = {
-                "frame": pill,
-                "active_dot": active_dot,
-                "name_row": name_row,
-                "scanned": scanned_lbl,
-                "late": late_lbl,
-                "timed_out": timed_out_lbl,
+                "frame":            pill,
+                "active_dot":       active_dot,
+                "name_row":         name_row,
+                # per-type label references
+                "stu_scanned":      stu_scanned_lbl,
+                "stu_late":         stu_late_lbl,
+                "stu_timed_out":    stu_timed_out_lbl,
+                "stf_scanned":      stf_scanned_lbl,
+                "stf_late":         stf_late_lbl,
+                "stf_timed_out":    stf_timed_out_lbl,
             }
 
         # ── Summary pill (rightmost) ─────────────────────────────────────────
@@ -408,11 +487,11 @@ class ScanScreen(ctk.CTkFrame):
             bar_fill.place(x=0, y=0)
 
         self._summary_widgets = {
-            "frame": summary,
+            "frame":     summary,
             "count_lbl": count_lbl,
-            "pct_lbl": pct_lbl,
-            "bar_fill": bar_fill,
-            "est": est,
+            "pct_lbl":   pct_lbl,
+            "bar_fill":  bar_fill,
+            "est":       est,
         }
 
     def _update_pills(self):
@@ -429,16 +508,25 @@ class ScanScreen(ctk.CTkFrame):
             if not widgets:
                 continue
 
-            stats = self.active_session.get("period_stats", {}).get(pid, {})
-            scanned = stats.get("scanned", 0)
-            late = stats.get("late", 0)
-            timed_out = stats.get("timed_out", 0)
+            period_stats = self.active_session.get("period_stats", {}).get(pid, {})
+            stu = period_stats.get("students", {})
+            stf = period_stats.get("staff", {})
 
-            widgets["scanned"].configure(text=str(scanned))
-            if widgets["late"]:
-                widgets["late"].configure(text=str(late))
-            if widgets["timed_out"]:
-                widgets["timed_out"].configure(text=str(timed_out))
+            # Update student labels (only if they were built)
+            if widgets["stu_scanned"] is not None:
+                widgets["stu_scanned"].configure(text=str(stu.get("scanned", 0)))
+            if widgets["stu_late"] is not None:
+                widgets["stu_late"].configure(text=str(stu.get("late", 0)))
+            if widgets["stu_timed_out"] is not None:
+                widgets["stu_timed_out"].configure(text=str(stu.get("timed_out", 0)))
+
+            # Update staff labels (only if they were built)
+            if widgets["stf_scanned"] is not None:
+                widgets["stf_scanned"].configure(text=str(stf.get("scanned", 0)))
+            if widgets["stf_late"] is not None:
+                widgets["stf_late"].configure(text=str(stf.get("late", 0)))
+            if widgets["stf_timed_out"] is not None:
+                widgets["stf_timed_out"].configure(text=str(stf.get("timed_out", 0)))
 
             # Active period highlight
             t_in_s = p.get("time_in_start")
@@ -451,13 +539,26 @@ class ScanScreen(ctk.CTkFrame):
                 border_color=color if active else C_BORDER,
             )
 
-            # Show/hide the live dot without rebuilding
             dot = widgets["active_dot"]
             if active:
                 if not dot.winfo_ismapped():
-                    dot.pack(side="left", padx=(0, 5), before=dot.master.winfo_children()[-1])
+                    dot.pack(side="left", padx=(0, 5),
+                             before=dot.master.winfo_children()[-1])
             else:
                 dot.pack_forget()
+
+        # Update summary pill
+        sw = self._summary_widgets
+        if sw:
+            n_total = self.active_session.get("count", 0)
+            est = sw.get("est")
+            count_text = f"{n_total} / {est}" if est else str(n_total)
+            sw["count_lbl"].configure(text=count_text)
+            if est and est > 0 and sw.get("pct_lbl") and sw.get("bar_fill"):
+                pct = min(round(n_total / est * 100), 100)
+                sw["pct_lbl"].configure(text=f"{pct}%")
+                fill_w = max(2, round(80 * n_total / est))
+                sw["bar_fill"].configure(width=fill_w)
 
     # ------------------------------------------------------------------
     # Tick — poll DB every 5 s, update UI only when state changed
@@ -652,7 +753,6 @@ class ScanScreen(ctk.CTkFrame):
                 Student.student_id == card.student_id).first()
 
             if student:
-                # Enforce: reject students from staff-only sessions
                 if attendee_type == "staff":
                     self._scan_area.show_wrong_type("staff")
                     self._add_log(
@@ -679,7 +779,6 @@ class ScanScreen(ctk.CTkFrame):
                 Staff.staff_id == str(card.student_id)).first()
 
             if staff:
-                # Enforce: reject staff from students-only sessions
                 if attendee_type == "students":
                     self._scan_area.show_wrong_type("students")
                     self._add_log(
@@ -703,8 +802,6 @@ class ScanScreen(ctk.CTkFrame):
 
             # ── Not found in either table ─────────────────────────────────
             self._scan_area.show_unknown_card(card.student_id)
-            #self._add_log("Unknown card", card.student_id, "error",
-                       # datetime.now().strftime("%I:%M:%S %p"))
 
         finally:
             db.close()
@@ -716,6 +813,11 @@ class ScanScreen(ctk.CTkFrame):
             Attendance.session_id == self.active_session["id"],
             Attendance.period_id == period["id"],
         ).first()
+
+        pid = period["id"]
+        ps = self.active_session.setdefault("period_stats", {})
+        ps.setdefault(pid, _empty_period_stats())
+        stu_stats = ps[pid]["students"]
 
         # ── SCAN OUT ──────────────────────────────────────────────────────
         if self._scan_mode == "out":
@@ -743,10 +845,7 @@ class ScanScreen(ctk.CTkFrame):
             existing.terminal_id = terminal_id
             db.commit()
 
-            ps = self.active_session.setdefault("period_stats", {})
-            pid = period["id"]
-            ps.setdefault(pid, {"scanned": 0, "late": 0, "timed_out": 0})
-            ps[pid]["timed_out"] += 1
+            stu_stats["timed_out"] += 1
 
             time_in_str = (existing.time_in.strftime("%I:%M %p")
                            if existing.time_in else "—")
@@ -774,12 +873,9 @@ class ScanScreen(ctk.CTkFrame):
         else:
             status = "present"
 
-        ps = self.active_session.setdefault("period_stats", {})
-        pid = period["id"]
-        ps.setdefault(pid, {"scanned": 0, "late": 0, "timed_out": 0})
-        ps[pid]["scanned"] += 1
+        stu_stats["scanned"] += 1
         if status == "late":
-            ps[pid]["late"] += 1
+            stu_stats["late"] += 1
 
         db.add(Attendance(
             student_id=student.student_id,
@@ -809,6 +905,11 @@ class ScanScreen(ctk.CTkFrame):
             StaffAttendance.period_id == period["id"],
         ).first()
 
+        pid = period["id"]
+        ps = self.active_session.setdefault("period_stats", {})
+        ps.setdefault(pid, _empty_period_stats())
+        stf_stats = ps[pid]["staff"]
+
         # ── SCAN OUT ──────────────────────────────────────────────────────
         if self._scan_mode == "out":
             if not period["timeout_enabled"]:
@@ -835,10 +936,7 @@ class ScanScreen(ctk.CTkFrame):
             existing.terminal_id = terminal_id
             db.commit()
 
-            ps = self.active_session.setdefault("period_stats", {})
-            pid = period["id"]
-            ps.setdefault(pid, {"scanned": 0, "late": 0, "timed_out": 0})
-            ps[pid]["timed_out"] += 1
+            stf_stats["timed_out"] += 1
 
             time_in_str = (existing.time_in.strftime("%I:%M %p")
                            if existing.time_in else "—")
@@ -866,12 +964,9 @@ class ScanScreen(ctk.CTkFrame):
         else:
             status = "present"
 
-        ps = self.active_session.setdefault("period_stats", {})
-        pid = period["id"]
-        ps.setdefault(pid, {"scanned": 0, "late": 0, "timed_out": 0})
-        ps[pid]["scanned"] += 1
+        stf_stats["scanned"] += 1
         if status == "late":
-            ps[pid]["late"] += 1
+            stf_stats["late"] += 1
 
         db.add(StaffAttendance(
             staff_id=staff.staff_id,

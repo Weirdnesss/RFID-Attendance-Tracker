@@ -21,12 +21,12 @@ def start_session(name, date, periods, academic_period_id,
             academic_period_id=academic_period_id,
             is_active=1,
             active_flag=1,
-            attendee_type=attendee_type,       # ← new
-            student_filter=student_filter,     # ← new
-            staff_filter=staff_filter,         # ← new
+            attendee_type=attendee_type,
+            student_filter=student_filter,
+            staff_filter=staff_filter,
         )
         db.add(new_session)
-        db.flush()  # get the new session ID before adding periods
+        db.flush()
 
         for p in periods:
             db.add(SessionPeriod(
@@ -49,7 +49,7 @@ def end_session(session_id):
         session = db.query(EventSession).filter(EventSession.id == session_id).first()
         if session:
             session.is_active = 0
-            session.active_flag = None  # releases the unique slot
+            session.active_flag = None
             db.commit()
             return True
         return False
@@ -72,10 +72,28 @@ def _fetch_group_counts():
     finally:
         db.close()
 
+
+def _empty_type_stats():
+    return {"scanned": 0, "late": 0, "timed_out": 0}
+
+
+def _empty_period_stats():
+    return {"students": _empty_type_stats(), "staff": _empty_type_stats()}
+
+
 def get_session_by_id(session_id: int):
     """
     Returns a session as a dict by ID, or None if not found.
     Shape matches ScanScreen.active_session.
+
+    period_stats shape:
+        {
+            period_id: {
+                "students": {"scanned": N, "late": N, "timed_out": N},
+                "staff":    {"scanned": N, "late": N, "timed_out": N},
+            },
+            ...
+        }
     """
     db = SessionLocal()
     try:
@@ -108,7 +126,92 @@ def get_session_by_id(session_id: int):
             })
             period_ids.append(p.id)
 
-        # ── Total scan count ────────────────────────────────────────────
+        # ── Initialise period_stats with the split shape ────────────────
+        period_stats = {pid: _empty_period_stats() for pid in period_ids}
+
+        # ── Student scan-in counts (grouped by period + status) ─────────
+        student_rows = (
+            db.query(
+                Attendance.period_id,
+                Attendance.status,
+                func.count().label("cnt")
+            )
+            .filter(Attendance.session_id == ev.id)
+            .group_by(Attendance.period_id, Attendance.status)
+            .all()
+        )
+
+        for row in student_rows:
+            pid = row.period_id
+            if pid not in period_stats:
+                period_stats[pid] = _empty_period_stats()
+            stu = period_stats[pid]["students"]
+            if row.status == "late":
+                stu["late"] += row.cnt
+            stu["scanned"] += row.cnt   # every scan-in counts (present + late)
+
+        # ── Student scan-out counts ─────────────────────────────────────
+        student_out_rows = (
+            db.query(
+                Attendance.period_id,
+                func.count().label("cnt")
+            )
+            .filter(
+                Attendance.session_id == ev.id,
+                Attendance.time_out.isnot(None)
+            )
+            .group_by(Attendance.period_id)
+            .all()
+        )
+
+        for row in student_out_rows:
+            pid = row.period_id
+            if pid not in period_stats:
+                period_stats[pid] = _empty_period_stats()
+            period_stats[pid]["students"]["timed_out"] = row.cnt
+
+        # ── Staff scan-in counts ────────────────────────────────────────
+        staff_rows = (
+            db.query(
+                StaffAttendance.period_id,
+                StaffAttendance.status,
+                func.count().label("cnt")
+            )
+            .filter(StaffAttendance.session_id == ev.id)
+            .group_by(StaffAttendance.period_id, StaffAttendance.status)
+            .all()
+        )
+
+        for row in staff_rows:
+            pid = row.period_id
+            if pid not in period_stats:
+                period_stats[pid] = _empty_period_stats()
+            stf = period_stats[pid]["staff"]
+            if row.status == "late":
+                stf["late"] += row.cnt
+            stf["scanned"] += row.cnt
+
+        # ── Staff scan-out counts ───────────────────────────────────────
+        staff_out_rows = (
+            db.query(
+                StaffAttendance.period_id,
+                func.count().label("cnt")
+            )
+            .filter(
+                StaffAttendance.session_id == ev.id,
+                StaffAttendance.time_out.isnot(None)
+            )
+            .group_by(StaffAttendance.period_id)
+            .all()
+        )
+
+        for row in staff_out_rows:
+            pid = row.period_id
+            if pid not in period_stats:
+                period_stats[pid] = _empty_period_stats()
+            period_stats[pid]["staff"]["timed_out"] = row.cnt
+
+        # ── Total counts ────────────────────────────────────────────────
         student_count = (
             db.query(func.count(Attendance.id))
             .filter(Attendance.session_id == ev.id)
@@ -122,68 +225,28 @@ def get_session_by_id(session_id: int):
         ) or 0
 
         total_count = student_count + staff_count
-
-        # ── Period stats (lightweight aggregation) ──────────────────────
-        stats_rows = (
-            db.query(
-                Attendance.period_id,
-                Attendance.status,
-                func.count().label("cnt")
-            )
-            .filter(Attendance.session_id == ev.id)
-            .group_by(Attendance.period_id, Attendance.status)
-            .all()
+        total_late = sum(
+            v["students"]["late"] + v["staff"]["late"]
+            for v in period_stats.values()
         )
-
-        period_stats = {}
-
-        for row in stats_rows:
-            pid = row.period_id
-            if pid not in period_stats:
-                period_stats[pid] = {"scanned": 0, "late": 0, "timed_out": 0}
-
-            if row.status == "late":
-                period_stats[pid]["late"] += row.cnt
-            else:
-                period_stats[pid]["scanned"] += row.cnt
-
-        # ── Timed-out count (separate because it's time_out based) ──────
-        timeout_rows = (
-            db.query(
-                Attendance.period_id,
-                func.count().label("cnt")
-            )
-            .filter(
-                Attendance.session_id == ev.id,
-                Attendance.time_out.isnot(None)
-            )
-            .group_by(Attendance.period_id)
-            .all()
-        )
-
-        for row in timeout_rows:
-            pid = row.period_id
-            if pid not in period_stats:
-                period_stats[pid] = {"scanned": 0, "late": 0, "timed_out": 0}
-            period_stats[pid]["timed_out"] = row.cnt
 
         # ── Build final dict ────────────────────────────────────────────
         return {
-            "id": ev.id,
-            "name": ev.name,
-            "attendee_type": ev.attendee_type,
-            "periods": periods,
-            "count": total_count or 0,
+            "id":               ev.id,
+            "name":             ev.name,
+            "attendee_type":    ev.attendee_type,
+            "periods":          periods,
+            "count":            total_count,
             "breakdown": {
-                "present": total_count or 0,  # optional refinement later
-                "late": sum(v["late"] for v in period_stats.values())
+                "present": total_count,
+                "late":    total_late,
             },
-            "period_stats": period_stats,
-            "student_filter": ev.student_filter,
-            "staff_filter":   ev.staff_filter, 
+            "period_stats":      period_stats,
+            "student_filter":    ev.student_filter,
+            "staff_filter":      ev.staff_filter,
             "student_estimated": ev.student_estimated or 0,
             "staff_estimated":   ev.staff_estimated   or 0,
-                }
+        }
 
     finally:
         db.close()
