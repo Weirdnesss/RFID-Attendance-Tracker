@@ -26,6 +26,7 @@ from ui.scan_screen import ScanScreen
 from ui.theme import (C_BG, C_SURFACE, C_BORDER, C_TEXT, C_MUTED, C_SUCCESS, C_ERROR)
 from ui.sessions_screen import SessionsScreen
 from ui.students_screen import StudentsScreen
+from ui.staff_screen import StaffScreen
 from ui.components.nav_button import NavButton
 from ui.admin_screen import AdminScreen
 from database       import test_connection, create_tables
@@ -40,7 +41,7 @@ ctk.set_appearance_mode("dark")
 # ---------------------------------------------------------------------------
 
 class App(ctk.CTk):
-    SCREENS = ["Scan", "Students", "Sessions", "Admin"]
+    SCREENS = ["Scan", "Students", "Staff", "Sessions", "Admin"]
 
     def __init__(self):
         super().__init__()
@@ -133,10 +134,11 @@ class App(ctk.CTk):
             row=2, column=0, sticky="ew")
 
         # Nav buttons
-        icons = {"Scan": "  ⬡  Scan",
+        icons = {"Scan":     "  ⬡  Scan",
                  "Students": "  ◈  Students",
+                 "Staff":    "  ◈  Staff",
                  "Sessions": "  ◇  Sessions",
-                 "Admin": "  ⬢  Admin"}
+                 "Admin":    "  ⬢  Admin"}
 
         for i, name in enumerate(self.SCREENS):
             btn = NavButton(
@@ -189,6 +191,9 @@ class App(ctk.CTk):
 
         # Students
         self._screens["Students"] = StudentsScreen(container)
+
+        # Staff
+        self._screens["Staff"] = StaffScreen(container)
 
         # Sessions
         self._screens["Sessions"] = SessionsScreen(container)
